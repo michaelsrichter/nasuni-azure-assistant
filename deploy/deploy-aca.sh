@@ -178,34 +178,75 @@ else
 fi
 
 # ---- 4. Build images (frontend only) ----------------------------------------
-FRONTEND_IMAGE="$ACR_LOGIN_SERVER/$FRONTEND_APP:$IMAGE_TAG"
-PROXY_IMAGE="$ACR_LOGIN_SERVER/$PROXY_CONTAINER:$IMAGE_TAG"
+# Each image's tag is derived from a hash of its build context, so an unchanged
+# image is never rebuilt or re-pushed. The timestamp IMAGE_TAG is kept only for
+# human-readable traceability ("FORCE_BUILD=1" bypasses the skip entirely).
+FORCE_BUILD="${FORCE_BUILD:-}"
+
+# Hash the relevant source for an image's build context. We hash file contents
+# (sorted, so order is stable) and exclude regenerable artifacts. Extra args are
+# additional paths/globs to exclude under the context dir.
+context_hash() {
+  local dir="$1"; shift
+  local prune=(-name node_modules -o -name dist -o -name .vite -o -name '*.log')
+  local extra
+  for extra in "$@"; do prune+=(-o -path "$dir/$extra"); done
+  # shellcheck disable=SC2046
+  find "$dir" \( "${prune[@]}" \) -prune -o -type f -print0 \
+    | sort -z \
+    | xargs -0 sha256sum \
+    | sha256sum \
+    | cut -c1-12
+}
+
+# Return 0 (true) if <repo>:<tag> already exists in the registry.
+tag_exists() {
+  local repo="$1" tag="$2"
+  az acr repository show-tags -n "$ACR_NAME" --repository "$repo" -o tsv 2>/dev/null \
+    | grep -qx "$tag"
+}
+
+# build_image <repo> <dockerfile> <context> [exclude...]
+# Builds via ACR Tasks only when the content hash isn't already published.
+# Sets the global BUILT_IMAGE to the fully-qualified image reference to use.
+BUILT_IMAGE=""
+build_image() {
+  local repo="$1" dockerfile="$2" context="$3"; shift 3
+  local hash tag
+  hash="$(context_hash "$context" "$@")"
+  tag="sha-$hash"
+
+  if [[ -z "$FORCE_BUILD" ]] && tag_exists "$repo" "$tag"; then
+    say "Skipping $repo build — unchanged (image $repo:$tag already in ACR)"
+  else
+    say "Building $repo image ($repo:$tag) via ACR Tasks"
+    az acr build \
+      --registry "$ACR_NAME" \
+      --image "$repo:$tag" \
+      --image "$repo:$IMAGE_TAG" \
+      --image "$repo:latest" \
+      --file "$dockerfile" \
+      --platform linux \
+      "$context" \
+      -o none
+  fi
+  BUILT_IMAGE="$ACR_LOGIN_SERVER/$repo:$tag"
+}
 
 # Sync the canonical architecture doc into the frontend build context so the
 # in-app /architecture page bundles it (docs/ is outside the Docker context).
+# Do this BEFORE hashing so doc changes correctly invalidate the SPA image.
 say "Syncing docs/architecture.md into frontend/src/content"
 mkdir -p frontend/src/content
 cp docs/architecture.md frontend/src/content/architecture.md
 
-say "Building frontend (nginx) image $FRONTEND_IMAGE (ACR Tasks)"
-az acr build \
-  --registry "$ACR_NAME" \
-  --image "$FRONTEND_APP:$IMAGE_TAG" \
-  --image "$FRONTEND_APP:latest" \
-  --file frontend/Dockerfile \
-  --platform linux \
-  frontend \
-  -o none
+# nginx SPA — exclude the proxy subdir so sidecar-only changes don't rebuild it.
+build_image "$FRONTEND_APP" frontend/Dockerfile frontend proxy
+FRONTEND_IMAGE="$BUILT_IMAGE"
 
-say "Building token-proxy image $PROXY_IMAGE (ACR Tasks)"
-az acr build \
-  --registry "$ACR_NAME" \
-  --image "$PROXY_CONTAINER:$IMAGE_TAG" \
-  --image "$PROXY_CONTAINER:latest" \
-  --file frontend/proxy/Dockerfile \
-  --platform linux \
-  frontend/proxy \
-  -o none
+# token-proxy sidecar — changes rarely; skipped on most frontend deploys.
+build_image "$PROXY_CONTAINER" frontend/proxy/Dockerfile frontend/proxy
+PROXY_IMAGE="$BUILT_IMAGE"
 
 ACR_USERNAME="$(az acr credential show -n "$ACR_NAME" --query username -o tsv)"
 ACR_PASSWORD="$(az acr credential show -n "$ACR_NAME" --query 'passwords[0].value' -o tsv)"
