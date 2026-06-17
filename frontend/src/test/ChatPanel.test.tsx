@@ -100,8 +100,8 @@ describe('ChatPanel (streaming)', () => {
     expect(sent.input).toBe('How do I list blobs?');
     expect(sent.stream).toBe(true);
 
-    // Tool pill rendered
-    expect(screen.getByText('knowledge_base_search')).toBeInTheDocument();
+    // Tool pill rendered (name humanized + completed state)
+    expect(screen.getByText(/Searched the knowledge base/i)).toBeInTheDocument();
 
     // Citation link
     expect(

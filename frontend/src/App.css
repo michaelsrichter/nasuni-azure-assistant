@@ -483,6 +483,57 @@ a {
   margin-top: 4px;
 }
 
+.citations-breakdown {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.citations li {
+  margin-bottom: 10px;
+}
+
+.citation-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.citation-title {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.source-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.6;
+  white-space: nowrap;
+  border: 1px solid var(--border);
+}
+
+.source-badge.source-nasuni {
+  background: rgba(245, 165, 36, 0.14);
+  border-color: rgba(245, 165, 36, 0.45);
+  color: var(--text);
+}
+
+.source-badge.source-mslearn {
+  background: rgba(36, 130, 245, 0.14);
+  border-color: rgba(36, 130, 245, 0.45);
+  color: var(--text);
+}
+
+.source-badge.source-unknown {
+  background: var(--panel-3);
+  color: var(--muted);
+}
+
 .meta {
   margin-top: 8px;
   font-size: 11px;

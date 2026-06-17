@@ -6,13 +6,21 @@ interface ToolPillProps {
 
 export function ToolPill({ name, args, done }: ToolPillProps) {
   const preview = previewArgs(args);
+  const label = humanizeName(name);
   return (
     <span className={`tool-pill ${done ? 'done' : 'active'}`} aria-live="polite">
       <span className="tool-pill-icon" aria-hidden>{done ? '✓' : '⋯'}</span>
-      <span className="tool-pill-name">{name}</span>
-      {preview && <span className="tool-pill-args">({preview})</span>}
+      <span className="tool-pill-name">
+        {done ? 'Searched' : 'Searching'} {label}
+      </span>
+      {preview && <span className="tool-pill-args">“{preview}”</span>}
     </span>
   );
+}
+
+function humanizeName(name: string): string {
+  if (name === 'knowledge_base_search') return 'the knowledge base (Nasuni docs + Microsoft Learn)';
+  return name.replace(/_/g, ' ');
 }
 
 function previewArgs(args: string | undefined): string | null {

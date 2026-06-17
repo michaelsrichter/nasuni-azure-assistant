@@ -10,7 +10,8 @@
 | Foundry Hosted Agent Service | Microsoft-managed | Runs the agent container, manages sessions, fronts it with the project Responses endpoint, and lists it under *project → Agents* |
 | `infra/Demo1.Infra` | .NET 10 console | Idempotent provisioning of Search + Knowledge Base + a smoke test |
 | Azure AI Search | Provisioned by `ensure-search` | Hosts the `kb-mslearn` Knowledge Base + Knowledge Source(s) |
-| MS Learn MCP server | Hosted by Microsoft | The Knowledge Base's current grounding source |
+| Nasuni documentation (file sources) | Indexed into Azure AI Search | Nasuni install/operations PDFs (`ks-file-865`, `ks-file-969`) embedded + chunked — one of the KB's grounding sources |
+| MS Learn MCP server | Hosted by Microsoft | The Microsoft Learn grounding source the KB fans out to |
 | Application Insights | Provisioned with the agent | Receives OTel spans (Foundry injects the connection string into the agent container) |
 
 There is **no backend API**, and the agent does **not** run in our Container App. The browser streams from the Foundry-hosted agent through a thin token-attaching proxy that runs alongside nginx in the frontend Container App.
@@ -26,6 +27,7 @@ sequenceDiagram
     participant PRX as token-proxy (sidecar)
     participant AG as Foundry Hosted Agent Service
     participant KB as Knowledge Base (kb-mslearn)
+    participant NAS as Nasuni file sources
     participant MCP as MS Learn MCP
 
     U->>UI: types question
@@ -38,9 +40,11 @@ sequenceDiagram
     AG-->>PRX: SSE response.output_item.added (function_call)
     AG-->>PRX: SSE function_call_arguments.delta then done
     AG->>KB: KnowledgeBaseRetrievalClient.Retrieve(query)
+    KB->>NAS: vector + keyword search over Nasuni PDFs
+    NAS-->>KB: ranked passages plus titles
     KB->>MCP: tools/call microsoft_docs_search
     MCP-->>KB: passages plus URLs and titles
-    KB-->>AG: KnowledgeBaseRetrievalResponse
+    KB-->>AG: KnowledgeBaseRetrievalResponse (merged + reranked)
     AG-->>PRX: SSE response.output_item.done (function_call_output)
     AG-->>PRX: SSE response.output_text.delta (multiple)
     AG-->>PRX: SSE response.completed with usage tokens
@@ -82,13 +86,13 @@ For local development against an agent you run yourself, set `FOUNDRY_AGENT_ENDP
 ```mermaid
 flowchart LR
     AG[Hosted Agent] -- knowledge_base_search --> KB[(Knowledge Base<br/>kb-mslearn)]
-    KB --> S1[KS: MS Learn MCP]
-    KB -. future .-> S2[KS: SharePoint]
-    KB -. future .-> S3[KS: Blob index]
-    KB -. future .-> S4[KS: more MCP servers]
+    KB --> S1[KS: MS Learn MCP<br/>ks-mslearn-mcp]
+    KB --> S2[KS: Nasuni docs<br/>ks-file-865]
+    KB --> S3[KS: Nasuni docs<br/>ks-file-969]
+    KB -. future .-> S4[KS: SharePoint / Blob /<br/>more MCP servers]
 ```
 
-The KB is a long-lived integration layer. It currently holds one knowledge source (`ks-mslearn-mcp`), but the agent always asks one tool (`knowledge_base_search`); the KB fans out to whichever sources it owns. Adding a new source does not change the agent.
+The KB is a long-lived integration layer. It currently holds three knowledge sources — the Microsoft Learn MCP server (`ks-mslearn-mcp`) and two Nasuni documentation file sources (`ks-file-865`, `ks-file-969`, Nasuni-on-Azure install/operations PDFs embedded and chunked into Azure AI Search). The agent always asks one tool (`knowledge_base_search`); the KB fans out to whichever sources it owns, merges and reranks the results, and returns a single citation set. Adding a new source does not change the agent.
 
 ### KB endpoint pitfall (root cause of the historical 401)
 
@@ -137,6 +141,7 @@ flowchart LR
     PRX -- Bearer token --> AG
     AG --> KB[KB + Search]
     AG --> LLM[gpt-4.1-mini]
+    KB --> NAS[Nasuni file sources]
     KB --> MCP[MS Learn MCP]
 ```
 

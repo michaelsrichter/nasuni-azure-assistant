@@ -18,7 +18,11 @@ export function ChatPanel({ initialTurns = [], readOnly = false, onPersist }: Ch
   const [busy, setBusy] = useState(false);
   const [cannedDismissed, setCannedDismissed] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
-  const logEndRef = useRef<HTMLDivElement | null>(null);
+  const logRef = useRef<HTMLOListElement | null>(null);
+  // Whether the user is currently pinned to the bottom of the log. When they
+  // scroll up to read earlier content we stop auto-scrolling so the stream
+  // doesn't yank them back down.
+  const pinnedRef = useRef(true);
 
   // Per-instance id counter that won't collide with ids from a loaded session.
   const nextIdRef = useRef(
@@ -32,16 +36,30 @@ export function ChatPanel({ initialTurns = [], readOnly = false, onPersist }: Ch
     onPersist?.(turns);
   }, [turns, readOnly, onPersist]);
 
-  // Keep the latest content in view as the answer streams in.
+  // Keep the latest content in view as the answer streams in, but only when the
+  // user is already at (or near) the bottom. Scroll the log container itself
+  // rather than the whole page so the rest of the layout stays put.
   useEffect(() => {
-    logEndRef.current?.scrollIntoView?.({ block: 'end' });
+    if (!pinnedRef.current) return;
+    const el = logRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
   }, [turns]);
+
+  const handleScroll = useCallback(() => {
+    const el = logRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    pinnedRef.current = distanceFromBottom < 80;
+  }, []);
 
   const send = useCallback(async () => {
     const q = question.trim();
     if (!q || busy || readOnly) return;
 
     const id = nextIdRef.current++;
+    // A freshly asked question should always scroll into view.
+    pinnedRef.current = true;
     setTurns((t) => [
       ...t,
       {
@@ -109,7 +127,7 @@ export function ChatPanel({ initialTurns = [], readOnly = false, onPersist }: Ch
         </div>
       )}
 
-      <ol className="chat-log" aria-live="polite">
+      <ol className="chat-log" aria-live="polite" ref={logRef} onScroll={handleScroll}>
         {showCanned && (
           <li className="canned-host">
             <CannedQuestions onSelect={pickCanned} />
@@ -144,7 +162,6 @@ export function ChatPanel({ initialTurns = [], readOnly = false, onPersist }: Ch
             </div>
           </li>
         ))}
-        <div ref={logEndRef} />
       </ol>
 
       {!readOnly && (
@@ -221,7 +238,9 @@ function dedupeCitations(citations: Citation[]): Citation[] {
   const seen = new Set<string>();
   const out: Citation[] = [];
   for (const c of citations) {
-    const key = c.url || c.title;
+    // Nasuni file chunks have no URL and often no title, so fall back to the
+    // snippet prefix to avoid collapsing distinct passages into one.
+    const key = c.url || c.title || `${c.source}:${(c.snippet ?? '').slice(0, 80)}`;
     if (!seen.has(key)) {
       seen.add(key);
       out.push(c);
@@ -231,17 +250,34 @@ function dedupeCitations(citations: Citation[]): Citation[] {
 }
 
 function CitationsList({ citations }: { citations: Citation[] }) {
+  const nasuni = citations.filter((c) => c.source === 'Nasuni documentation').length;
+  const msLearn = citations.filter((c) => c.source === 'Microsoft Learn').length;
+  const breakdown = [
+    nasuni > 0 ? `${nasuni} from Nasuni docs` : null,
+    msLearn > 0 ? `${msLearn} from Microsoft Learn` : null,
+  ].filter(Boolean);
+
   return (
     <details className="citations" open>
       <summary>
         {citations.length} citation{citations.length === 1 ? '' : 's'}
+        {breakdown.length > 0 && (
+          <span className="citations-breakdown"> · {breakdown.join(' · ')}</span>
+        )}
       </summary>
       <ol>
         {citations.map((c, i) => (
-          <li key={`${c.url}-${i}`}>
-            <a href={c.url} target="_blank" rel="noreferrer">
-              {c.title || c.url}
-            </a>
+          <li key={`${c.url || c.title}-${i}`}>
+            <div className="citation-head">
+              <SourceBadge source={c.source} />
+              {c.url ? (
+                <a href={c.url} target="_blank" rel="noreferrer">
+                  {c.title || c.url}
+                </a>
+              ) : (
+                <span className="citation-title">{c.title || 'Nasuni documentation excerpt'}</span>
+              )}
+            </div>
             {c.snippet && (
               <div className="snippet">
                 {c.snippet.slice(0, 240)}
@@ -252,5 +288,27 @@ function CitationsList({ citations }: { citations: Citation[] }) {
         ))}
       </ol>
     </details>
+  );
+}
+
+function SourceBadge({ source }: { source: Citation['source'] }) {
+  if (source === 'Microsoft Learn') {
+    return (
+      <span className="source-badge source-mslearn" title="Grounded in Microsoft Learn">
+        <span aria-hidden>📘</span> Microsoft Learn
+      </span>
+    );
+  }
+  if (source === 'Nasuni documentation') {
+    return (
+      <span className="source-badge source-nasuni" title="Grounded in the Nasuni documentation PDFs">
+        <span aria-hidden>📄</span> Nasuni PDF
+      </span>
+    );
+  }
+  return (
+    <span className="source-badge source-unknown" title="Knowledge base">
+      <span aria-hidden>📑</span> Knowledge base
+    </span>
   );
 }

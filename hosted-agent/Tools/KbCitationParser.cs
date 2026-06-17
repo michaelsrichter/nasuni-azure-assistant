@@ -39,6 +39,14 @@ internal static class KbCitationParser
             {
                 string? title = null, url = null, snippet = null;
 
+                // The outer entry carries the knowledge-source hints (MCP chunks
+                // have a toolName and a "ks-mslearn-..." title); file chunks don't.
+                string? toolName = null, outerTitle = null;
+                if (entry.TryGetProperty("toolName", out var tn) && tn.ValueKind == JsonValueKind.String)
+                    toolName = tn.GetString();
+                if (entry.TryGetProperty("title", out var ot) && ot.ValueKind == JsonValueKind.String)
+                    outerTitle = ot.GetString();
+
                 if (entry.TryGetProperty("content", out var innerProp))
                 {
                     if (innerProp.ValueKind == JsonValueKind.String)
@@ -47,12 +55,29 @@ internal static class KbCitationParser
                         ReadInnerObject(innerProp, out title, out url, out snippet);
                 }
 
-                if (string.IsNullOrEmpty(title) && entry.TryGetProperty("title", out var t) && t.ValueKind == JsonValueKind.String)
-                    title = t.GetString();
+                if (string.IsNullOrEmpty(title) && !string.IsNullOrEmpty(outerTitle))
+                    title = outerTitle;
 
-                citations.Add(new KbCitation(title ?? "", url ?? "", snippet));
+                var source = DetermineSource(toolName, outerTitle, url);
+                citations.Add(new KbCitation(title ?? "", url ?? "", snippet, source));
             }
         }
+    }
+
+    // Label each retrieved chunk with the knowledge source it came from so the UI
+    // can show whether a fact is grounded in the Nasuni PDFs or Microsoft Learn.
+    // MS Learn (MCP) chunks carry toolName "microsoft_docs_search", an outer title
+    // prefixed "ks-mslearn-", and/or a learn.microsoft.com URL. Nasuni file chunks
+    // have none of those.
+    private static string DetermineSource(string? toolName, string? outerTitle, string? url)
+    {
+        if (!string.IsNullOrEmpty(toolName) && toolName.Contains("microsoft_docs", StringComparison.OrdinalIgnoreCase))
+            return "Microsoft Learn";
+        if (!string.IsNullOrEmpty(outerTitle) && outerTitle.StartsWith("ks-mslearn", StringComparison.OrdinalIgnoreCase))
+            return "Microsoft Learn";
+        if (!string.IsNullOrEmpty(url) && url.Contains("learn.microsoft.com", StringComparison.OrdinalIgnoreCase))
+            return "Microsoft Learn";
+        return "Nasuni documentation";
     }
 
     private static void TryParseInner(string? raw, out string? title, out string? url, out string? snippet)
@@ -82,4 +107,4 @@ internal static class KbCitationParser
     }
 }
 
-internal sealed record KbCitation(string Title, string Url, string? Snippet);
+internal sealed record KbCitation(string Title, string Url, string? Snippet, string Source);

@@ -21,7 +21,7 @@ internal sealed class KnowledgeBaseSearchTool
         _kb = new KnowledgeBaseRetrievalClient(searchEndpoint, knowledgeBaseName, credential);
     }
 
-    [Description("Retrieve grounding passages from the Microsoft Learn knowledge base. Returns a JSON array of { index, title, url, snippet } entries.")]
+    [Description("Retrieve grounding passages from the knowledge base, which spans the Nasuni-on-Azure documentation PDFs and Microsoft Learn. Returns a JSON array of { index, title, url, source, snippet } entries, where source is either \"Nasuni documentation\" or \"Microsoft Learn\".")]
     public async Task<string> SearchAsync(
         [Description("A focused search query derived from the user's question. Prefer specific API or product names.")]
         string query,
@@ -43,6 +43,7 @@ internal sealed class KnowledgeBaseSearchTool
             index = i + 1,
             title = c.Title,
             url = c.Url,
+            source = c.Source,
             snippet = string.IsNullOrEmpty(c.Snippet)
                 ? null
                 : (c.Snippet!.Length > 1500 ? c.Snippet[..1500] + "…" : c.Snippet),

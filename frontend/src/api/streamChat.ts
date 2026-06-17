@@ -2,10 +2,13 @@ import { parseSse } from '../streaming/sse';
 import type { TokenUsage } from '../pricing';
 
 // --- Citation shape (matches what the agent's knowledge_base_search tool returns) ---
+export type CitationSource = 'Nasuni documentation' | 'Microsoft Learn' | 'Unknown';
+
 export interface Citation {
   index: number;
   title: string;
   url: string;
+  source: CitationSource;
   snippet?: string;
 }
 
@@ -134,9 +137,17 @@ function parseCitations(output: unknown): Citation[] {
         index: Number(x.index ?? i + 1),
         title: String(x.title ?? ''),
         url: String(x.url ?? ''),
+        source: normalizeSource(x.source),
         snippet: x.snippet == null ? undefined : String(x.snippet),
       }));
   } catch {
     return [];
   }
+}
+
+function normalizeSource(raw: unknown): CitationSource {
+  const s = typeof raw === 'string' ? raw.toLowerCase() : '';
+  if (s.includes('learn') || s.includes('microsoft')) return 'Microsoft Learn';
+  if (s.includes('nasuni')) return 'Nasuni documentation';
+  return 'Unknown';
 }
