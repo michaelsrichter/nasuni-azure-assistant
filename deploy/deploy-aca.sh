@@ -51,6 +51,14 @@ FOUNDRY_ACCOUNT_NAME="${FOUNDRY_ACCOUNT_NAME:-researchfoundry}"
 FOUNDRY_PROJECT_NAME="${FOUNDRY_PROJECT_NAME:-researchProject}"
 FOUNDRY_TOKEN_SCOPE="${FOUNDRY_TOKEN_SCOPE:-https://ai.azure.com/.default}"
 
+# Frontend telemetry (injected into the SPA at container start via nginx).
+#   * Application Insights — provisioned/reused below unless a connection string
+#     is supplied explicitly. Set APPINSIGHTS_NAME='' to skip provisioning.
+#   * Clarity — supply CLARITY_PROJECT_ID to enable; empty = disabled (no-op).
+APPINSIGHTS_NAME="${APPINSIGHTS_NAME:-appi-demo1}"
+APPLICATIONINSIGHTS_CONNECTION_STRING="${APPLICATIONINSIGHTS_CONNECTION_STRING:-}"
+CLARITY_PROJECT_ID="${CLARITY_PROJECT_ID:-}"
+
 # The full Responses URL of the Foundry hosted agent. Built from the project +
 # agent name unless supplied explicitly.
 PROJECT_ENDPOINT="https://${FOUNDRY_ACCOUNT_NAME}.services.ai.azure.com/api/projects/${FOUNDRY_PROJECT_NAME}"
@@ -129,6 +137,42 @@ fi
 
 ACR_LOGIN_SERVER="$(az acr show -n "$ACR_NAME" -g "$RESOURCE_GROUP" --query loginServer -o tsv)"
 
+# ---- 3b. Application Insights (frontend telemetry) --------------------------
+# Provision (or reuse) a workspace-based App Insights component and capture its
+# connection string. Skipped when a connection string is supplied explicitly or
+# APPINSIGHTS_NAME is blank. The string is NOT committed to source — it is
+# injected into the SPA at container start via nginx (see nginx.conf.template).
+if [[ -z "$APPLICATIONINSIGHTS_CONNECTION_STRING" && -n "$APPINSIGHTS_NAME" ]]; then
+  if ! az extension show -n application-insights >/dev/null 2>&1; then
+    az extension add -n application-insights --yes >/dev/null 2>&1 || true
+  fi
+  if az monitor app-insights component show --app "$APPINSIGHTS_NAME" -g "$RESOURCE_GROUP" >/dev/null 2>&1; then
+    say "Reusing Application Insights component '$APPINSIGHTS_NAME'"
+  else
+    say "Creating Application Insights component '$APPINSIGHTS_NAME'"
+    az monitor app-insights component create \
+      --app "$APPINSIGHTS_NAME" \
+      --location "$LOCATION" \
+      --resource-group "$RESOURCE_GROUP" \
+      --kind web \
+      --application-type web \
+      -o none
+  fi
+  APPLICATIONINSIGHTS_CONNECTION_STRING="$(az monitor app-insights component show \
+    --app "$APPINSIGHTS_NAME" -g "$RESOURCE_GROUP" --query connectionString -o tsv 2>/dev/null || true)"
+fi
+
+if [[ -n "$APPLICATIONINSIGHTS_CONNECTION_STRING" ]]; then
+  say "App Insights: enabled"
+else
+  warn "App Insights: disabled (no connection string) — frontend telemetry off"
+fi
+if [[ -n "$CLARITY_PROJECT_ID" ]]; then
+  say "Clarity: enabled (project $CLARITY_PROJECT_ID)"
+else
+  say "Clarity: disabled (set CLARITY_PROJECT_ID to enable)"
+fi
+
 # ---- 4. Build images (frontend only) ----------------------------------------
 FRONTEND_IMAGE="$ACR_LOGIN_SERVER/$FRONTEND_APP:$IMAGE_TAG"
 PROXY_IMAGE="$ACR_LOGIN_SERVER/$PROXY_CONTAINER:$IMAGE_TAG"
@@ -194,6 +238,10 @@ properties:
         env:
           - name: PROXY_URL
             value: http://127.0.0.1:8090
+          - name: APPLICATIONINSIGHTS_CONNECTION_STRING
+            value: "$APPLICATIONINSIGHTS_CONNECTION_STRING"
+          - name: CLARITY_PROJECT_ID
+            value: "$CLARITY_PROJECT_ID"
       - name: $PROXY_CONTAINER
         image: $PROXY_IMAGE
         resources:
