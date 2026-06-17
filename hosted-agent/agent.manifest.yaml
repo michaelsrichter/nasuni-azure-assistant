@@ -44,4 +44,4 @@ parameters:
 resources:
   - kind: model
     id: gpt-4.1-mini
-    name:
+    name: gpt-4.1-mini

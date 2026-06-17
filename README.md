@@ -1,6 +1,6 @@
 # Demo1 — Foundry Hosted Agent + MS Learn Knowledge Base
 
-A streaming chatbot demo built on a **Microsoft Foundry hosted agent** that grounds every answer in the **MS Learn MCP server** via a Foundry **Knowledge Base**. React SPA + .NET 10 hosted agent + Node token-proxy sidecar, all deployable to Azure Container Apps with one script. The browser streams Server-Sent Events end-to-end, with live tool pills and per-turn token-usage + cost.
+A streaming chatbot demo built on a **Microsoft Foundry hosted agent** that grounds every answer in the **MS Learn MCP server** via a Foundry **Knowledge Base**. The agent runs in **Foundry's Hosted Agent Service**; a React SPA + Node token-proxy sidecar are the only things deployed to Azure Container Apps. The browser streams Server-Sent Events end-to-end, with live tool pills and per-turn token-usage + cost.
 
 > Acceptance: ask a question on the deployed `chatbot-web` site. The agent calls `knowledge_base_search`, the KB queries the MS Learn MCP server, the model writes an answer with `[n]` citations, and the UI shows tokens-in / tokens-out / estimated cost the moment the stream completes.
 
@@ -10,13 +10,17 @@ A streaming chatbot demo built on a **Microsoft Foundry hosted agent** that grou
 flowchart LR
     U[User] -->|streams| NGX[nginx :8080]
     NGX -- 127.0.0.1:8090 --> PRX[token-proxy<br/>Node sidecar]
-    PRX --> AG[Hosted Agent<br/>Demo1.Agent :8088]
+    PRX -- Bearer token --> AG[Foundry Hosted Agent Service<br/>demo1-kb-mslearn]
     AG --> KB[(Knowledge Base<br/>kb-mslearn)]
     KB --> MCP[MS Learn MCP]
     AG --> M[gpt-4.1-mini]
+    subgraph ACA["Azure Container App (frontend only)"]
+      NGX
+      PRX
+    end
 ```
 
-There is **no backend API**. The hosted agent owns the system prompt, the `knowledge_base_search` function tool, and the streaming `/responses` endpoint. The sidecar attaches a workload-identity bearer (or none, in ACA-internal mode) so the browser can never see credentials.
+There is **no backend API**, and the agent does **not** run in the Container App — it lives in Foundry's Hosted Agent Service, where it owns the system prompt, the `knowledge_base_search` function tool, and the streaming Responses endpoint. The Container App holds only the SPA and a token-proxy sidecar that attaches a workload-identity bearer so the browser never sees credentials.
 
 See [docs/architecture.md](docs/architecture.md) for the full picture, including the streaming-event contract and the KB endpoint pitfall that caused the historical 401.
 
@@ -24,12 +28,12 @@ See [docs/architecture.md](docs/architecture.md) for the full picture, including
 
 ```
 demo1/
-  hosted-agent/    .NET 10 Foundry hosted agent (Demo1.Agent)
+  hosted-agent/    .NET 10 Foundry hosted agent (Demo1.Agent) — deployed to Foundry Agent Service
     Program.cs       AgentHost + Foundry Responses + function tool
     Tools/           KnowledgeBaseSearchTool + KbCitationParser
     Instructions.cs  System prompt (call KB first, cite every fact)
     Dockerfile       aspnet:10.0 multi-stage
-    agent.manifest.yaml   Foundry-managed-hosting manifest (forward-looking)
+    agent.manifest.yaml   Hosted-agent manifest consumed by `azd ai agent init`
   frontend/
     src/             React SPA (streaming chat, tool pills, usage footer)
     src/streaming/   SSE parser
@@ -40,7 +44,9 @@ demo1/
     Dockerfile       nginx + Vite bundle
     nginx.conf.template  /api/responses → 127.0.0.1:8090 (buffering off)
   infra/Demo1.Infra/  .NET 10 console: ensure-search / ensure-kb / ensure-agent
-  deploy/deploy-aca.sh  One-command ACR build + multi-container ACA deploy
+  deploy/
+    deploy-agent.sh   azd: build + register the hosted agent in Foundry Agent Service
+    deploy-aca.sh     az acr build + multi-container ACA deploy (frontend only)
   docs/               architecture.md, operations.md, testing.md
   state.json          Persisted resource IDs (gitignored)
 ```
@@ -72,20 +78,27 @@ dotnet run
 
 # 5. run the token-proxy sidecar (port 8090, no Entra token for local agent)
 cd frontend/proxy && npm install
-FOUNDRY_AGENT_ENDPOINT=http://127.0.0.1:8088 FOUNDRY_TOKEN_SCOPE= node server.mjs
+FOUNDRY_AGENT_ENDPOINT=http://127.0.0.1:8088 FOUNDRY_TOKEN_SCOPE= INJECT_ISOLATION_KEYS=true node server.mjs
 
 # 6. start the SPA
 cd frontend && npm install && npm run dev
 # open http://localhost:5173
 ```
 
-## Deploying to Azure Container Apps
+## Deploying
+
+Deployment has **two halves** — the agent goes to Foundry's Hosted Agent Service, the frontend goes to Azure Container Apps:
 
 ```bash
-./deploy/deploy-aca.sh
+# 1. build + register the hosted agent in Foundry Agent Service (azd ai agent)
+azd extension install azure.ai.agents      # one-time
+./deploy/deploy-agent.sh
+
+# 2. deploy the frontend Container App, pointing the sidecar at the agent
+FOUNDRY_AGENT_RESPONSES_URL="<the URL printed by step 1>" ./deploy/deploy-aca.sh
 ```
 
-Defaults: `rg-demo1-aca` / `westcentralus` / standard managed env. The script builds three images (`hosted-agent`, `chatbot-web`, `token-proxy`), deploys the agent with internal ingress, deploys `chatbot-web` as a multi-container app (`nginx` + `token-proxy`), and assigns RBAC to the agent's SAMI. See [docs/operations.md](docs/operations.md#deploying-to-azure-container-apps) for the full breakdown.
+`deploy-agent.sh` drives `azd ai agent init/provision/deploy` so the agent appears under *Foundry → project → Agents* (Type `hosted`). `deploy-aca.sh` builds two images (`chatbot-web` + `token-proxy`), deploys a single multi-container Container App (frontend only), and grants its identity **Azure AI User** at the project scope so the sidecar can invoke the agent. See [docs/operations.md](docs/operations.md#deploying) for the full breakdown.
 
 ## Tests
 
@@ -101,7 +114,7 @@ See [docs/testing.md](docs/testing.md) for the test matrix.
 ## Docs
 
 - [docs/architecture.md](docs/architecture.md) — components, sequence diagram, streaming contract, design rationale
-- [docs/operations.md](docs/operations.md) — running locally, deploying to ACA, App Insights KQL, troubleshooting matrix
+- [docs/operations.md](docs/operations.md) — running locally, deploying the agent + frontend, App Insights KQL, troubleshooting matrix
 - [docs/testing.md](docs/testing.md) — test layout and how to add a model
 
 ## Troubleshooting
