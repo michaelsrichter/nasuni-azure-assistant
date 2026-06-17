@@ -30,3 +30,4 @@ hosted-agent/bin/
 hosted-agent/obj/
 hosted-agent/.env
 hosted-agent/.azure/
+frontend/proxy/node_modules/

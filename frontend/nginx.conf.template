@@ -5,29 +5,30 @@ server {
     root   /usr/share/nginx/html;
     index  index.html;
 
-    # Proxy /api/* to the backend container app.
-    # BACKEND_URL is substituted by nginx's envsubst entrypoint at start time
-    # (e.g. https://chatbot-api.<env-default-domain>).
-    location /api/ {
-        # Azure Container Apps ingress (Front Door) requires SNI on the TLS
-        # handshake and rejects the default $proxy_host (which becomes the
-        # upstream IP). We extract the bare hostname into a variable and use
-        # it for both Host and SNI.
-        set $backend_host "${BACKEND_HOST}";
-
-        proxy_pass         ${BACKEND_URL}/api/;
+    # Streaming endpoint: route the browser's POST /api/responses to the
+    # token-proxy sidecar over localhost. The sidecar attaches the managed
+    # identity token and forwards to the Foundry hosted agent.
+    #
+    # Both containers share the network namespace inside the same ACA app.
+    # PROXY_URL is substituted at start time (default http://127.0.0.1:8090).
+    location = /api/responses {
+        proxy_pass         ${PROXY_URL}/;
         proxy_http_version 1.1;
-        proxy_set_header   Host              $backend_host;
+        proxy_set_header   Host              $host;
         proxy_set_header   X-Real-IP         $remote_addr;
         proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
         proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_set_header   Connection        "";
 
-        proxy_ssl_server_name on;
-        proxy_ssl_name        $backend_host;
+        # SSE: disable response buffering so deltas reach the client immediately.
+        proxy_buffering           off;
+        proxy_cache               off;
+        proxy_request_buffering   off;
+        chunked_transfer_encoding on;
 
         proxy_connect_timeout 30s;
-        proxy_send_timeout    120s;
-        proxy_read_timeout    120s;
+        proxy_send_timeout    600s;
+        proxy_read_timeout    600s;
     }
 
     # Cache hashed assets aggressively.

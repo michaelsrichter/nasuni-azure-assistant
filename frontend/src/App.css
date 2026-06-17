@@ -194,6 +194,74 @@ body,
   color: var(--muted);
 }
 
+.tool-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.tool-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid #334155;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.tool-pill.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.tool-pill.done {
+  border-color: var(--badge-kb);
+  color: var(--badge-kb);
+}
+
+.tool-pill-icon {
+  font-size: 11px;
+  width: 12px;
+  display: inline-block;
+  text-align: center;
+}
+
+.tool-pill-name {
+  font-weight: 600;
+}
+
+.tool-pill-args {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.usage-footer {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.usage-footer .sep {
+  opacity: 0.5;
+}
+
+.usage-footer .model {
+  background: rgba(56, 189, 248, 0.12);
+  padding: 1px 6px;
+  border-radius: 4px;
+  color: var(--accent);
+}
+
 .chat-input {
   display: flex;
   gap: 8px;

@@ -2,7 +2,27 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { ChatPanel } from '../components/ChatPanel';
 
-describe('ChatPanel', () => {
+function sseStream(events: Array<{ event: string; data: unknown }>): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  return new ReadableStream({
+    start(controller) {
+      for (const e of events) {
+        const data = typeof e.data === 'string' ? e.data : JSON.stringify(e.data);
+        controller.enqueue(encoder.encode(`event: ${e.event}\ndata: ${data}\n\n`));
+      }
+      controller.close();
+    },
+  });
+}
+
+function mockResponse(body: ReadableStream<Uint8Array>, status = 200): Response {
+  return new Response(body, {
+    status,
+    headers: { 'Content-Type': 'text/event-stream' },
+  });
+}
+
+describe('ChatPanel (streaming)', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });
@@ -13,30 +33,58 @@ describe('ChatPanel', () => {
     expect(screen.getByText(/Ask a question about Microsoft APIs/i)).toBeInTheDocument();
   });
 
-  it('sends a question and renders the answer + citations', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        answer: 'Use BlobContainerClient.GetBlobs().',
-        citations: [
-          {
-            title: 'List blobs with .NET',
-            url: 'https://learn.microsoft.com/azure/storage/blobs/storage-blobs-list',
-            snippet: 'List blobs in a container...'
-          }
-        ],
-        source: 'mcp',
-        elapsedMs: 1234,
-        traceId: 'abcdef0123456789'
-      })
-    });
+  it('streams a tool call, text deltas, citations, and a usage footer', async () => {
+    const citations = [
+      {
+        index: 1,
+        title: 'List blobs with .NET',
+        url: 'https://learn.microsoft.com/azure/storage/blobs/storage-blobs-list',
+        snippet: 'List blobs in a container...',
+      },
+    ];
+
+    const body = sseStream([
+      { event: 'response.created', data: { response: { id: 'r_1' } } },
+      {
+        event: 'response.output_item.added',
+        data: { item: { type: 'function_call', call_id: 'c1', name: 'knowledge_base_search' } },
+      },
+      {
+        event: 'response.function_call_arguments.delta',
+        data: { call_id: 'c1', delta: '{"query":"list blobs"}' },
+      },
+      {
+        event: 'response.output_item.done',
+        data: {
+          item: {
+            type: 'function_call_output',
+            call_id: 'c1',
+            output: JSON.stringify(citations),
+          },
+        },
+      },
+      { event: 'response.output_text.delta', data: { delta: 'Use ' } },
+      { event: 'response.output_text.delta', data: { delta: 'BlobContainerClient.GetBlobs() [1].' } },
+      {
+        event: 'response.completed',
+        data: {
+          response: {
+            id: 'r_1',
+            model: 'gpt-4.1-mini',
+            usage: { input_tokens: 4295, output_tokens: 88, total_tokens: 4383 },
+          },
+        },
+      },
+    ]);
+
+    const fetchMock = vi.fn().mockResolvedValue(mockResponse(body));
     vi.stubGlobal('fetch', fetchMock);
 
     render(<ChatPanel />);
 
-    const textarea = screen.getByLabelText(/ask a question/i);
-    fireEvent.change(textarea, { target: { value: 'How do I list blobs?' } });
+    fireEvent.change(screen.getByLabelText(/ask a question/i), {
+      target: { value: 'How do I list blobs?' },
+    });
     fireEvent.click(screen.getByRole('button', { name: /send/i }));
 
     await waitFor(() => {
@@ -45,31 +93,36 @@ describe('ChatPanel', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const call = fetchMock.mock.calls[0];
-    expect(call[0]).toContain('/api/chat');
-    expect(JSON.parse(call[1].body)).toEqual({ question: 'How do I list blobs?' });
+    expect(call[0]).toContain('/api/responses');
+    const sent = JSON.parse(call[1].body);
+    expect(sent.input).toBe('How do I list blobs?');
+    expect(sent.stream).toBe(true);
 
-    expect(screen.getByText(/MCP \(fallback\)/i)).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /list blobs with \.net/i })).toHaveAttribute(
-      'href',
-      'https://learn.microsoft.com/azure/storage/blobs/storage-blobs-list'
-    );
+    // Tool pill rendered
+    expect(screen.getByText('knowledge_base_search')).toBeInTheDocument();
+
+    // Citation link
+    expect(
+      screen.getByRole('link', { name: /list blobs with \.net/i }),
+    ).toHaveAttribute('href', 'https://learn.microsoft.com/azure/storage/blobs/storage-blobs-list');
+
+    // Usage footer
+    expect(screen.getByLabelText(/token usage and estimated cost/i)).toBeInTheDocument();
+    expect(screen.getByText(/4,295 in/)).toBeInTheDocument();
+    expect(screen.getByText(/88 out/)).toBeInTheDocument();
+    expect(screen.getByText(/gpt-4\.1-mini/)).toBeInTheDocument();
   });
 
   it('shows an error when the request fails', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValue({
-        ok: false,
-        status: 500,
-        statusText: 'Internal Server Error',
-        text: async () => 'boom'
-      })
+      vi.fn().mockResolvedValue(
+        new Response('boom', { status: 500, statusText: 'Internal Server Error' }),
+      ),
     );
 
     render(<ChatPanel />);
-    fireEvent.change(screen.getByLabelText(/ask a question/i), {
-      target: { value: 'hi' }
-    });
+    fireEvent.change(screen.getByLabelText(/ask a question/i), { target: { value: 'hi' } });
     fireEvent.click(screen.getByRole('button', { name: /send/i }));
 
     await waitFor(() => {

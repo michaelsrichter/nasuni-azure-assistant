@@ -13,6 +13,6 @@ FROM nginx:1.27-alpine AS runtime
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /src/dist /usr/share/nginx/html
 
-ENV BACKEND_URL=http://localhost:5119
+ENV PROXY_URL=http://127.0.0.1:8090
 EXPOSE 8080
 CMD ["nginx", "-g", "daemon off;"]
