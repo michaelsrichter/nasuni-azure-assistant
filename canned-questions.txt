@@ -1,0 +1,28 @@
+Here are 12 canned demo questions designed to exercise both the Nasuni KB content and the Microsoft Learn MCP grounding in a single answer:
+
+## Deployment & Architecture
+1. **What Azure VM SKUs does Nasuni recommend for an Edge Appliance, and how do those compare to the current Azure-recommended general-purpose D-series and E-series families on Microsoft Learn?**
+2. **Walk me through deploying a Nasuni Edge Appliance on Microsoft Azure end-to-end, including the Azure resource group, vNet, and storage account prerequisites I should create first per Azure Well-Architected guidance.**
+3. **How do I install Nasuni in an Azure Local (formerly Azure Stack HCI) cluster, and what Azure Local cluster prerequisites does Microsoft require before I add the VM?**
+
+## Storage & Data Services
+4. **How do I configure Azure Blob Storage as the back-end for Nasuni UniFS, and which Azure blob redundancy option (LRS, ZRS, GRS, RA-GZRS) should I pick for a production global filesystem?**
+5. **Explain the Nasuni Azure Blob Storage failover process and how it relates to Microsoft's documented storage account failover and last-sync-time behavior.**
+6. **What's the difference between NDS for Azure and standard Nasuni volumes, and how does NDS plug into Azure AI Search for RAG scenarios?**
+
+## Identity & Access
+7. **How do I set up Microsoft Entra ID SSO for File IQ, and what Entra enterprise application, claims, and group-assignment settings does Microsoft recommend for SAML apps?**
+8. **How does Nasuni use the Microsoft Entra ID Application Proxy to publish on-prem-style file access, and what Entra licensing tier is required per Microsoft Learn?**
+
+## Microsoft 365 & Copilot
+9. **How do I configure the Microsoft 365 Copilot connector for Nasuni file shares, and what Graph connector permissions and admin consent steps does Microsoft Learn say I need in the Microsoft 365 admin center?**
+10. **What can my users do with the Microsoft 365 integration in Nasuni Web Access (co-authoring, Office for the web), and how does that compare to opening the same file from SharePoint/OneDrive?**
+
+## Security & Operations
+11. **How do I send Nasuni audit and ransomware events to Microsoft Sentinel, and what Sentinel data connector type, Log Analytics workspace, and analytics rules should I configure on the Microsoft side?**
+12. **How do I publish Nasuni Web Access through Azure Front Door, and what Front Door SKU, WAF policy, and origin health-probe settings does Microsoft recommend for a globally distributed file portal?**
+
+## Bonus (network/cost)
+13. **What are the Azure egress and Azure AI Search cost considerations when running Nasuni NDS + Azure AI Search at scale, factoring in Microsoft's published pricing tiers and replica/partition guidance?**
+
+Each question is phrased so the agent *must* pull a Nasuni-specific procedure **and** a Microsoft Learn fact (SKU, license, permission, pricing tier, redundancy option) to give a complete answer, which makes the dual-grounding obvious in the demo.
