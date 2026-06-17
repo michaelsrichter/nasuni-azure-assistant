@@ -12,13 +12,16 @@
 #
 # Under the hood it drives the Azure Developer CLI agent extension, which
 # builds the container image, pushes it to a project-linked ACR, registers a
-# Hosted agent version with Foundry, and waits for it to go `active`. azd also
-# assigns the baseline RBAC (Container Registry Repository Reader for the
-# project MI, Foundry User for the platform-created agent identity).
+# Hosted agent version with Foundry, and waits for it to go `active`.
 #
-# The ONE thing azd can't infer is that our `knowledge_base_search` tool calls
-# Azure AI Search directly, so this script also grants the agent identity the
-# Search data-plane roles (best effort; see AGENT_PRINCIPAL_ID below).
+# IMPORTANT: when azd runs non-interactively (--no-prompt) it does NOT grant the
+# platform-created agent identity its **Foundry User** role. Without that role
+# the hosted agent fails to provision (~80s "ProvisioningError: Please retry").
+# This script therefore grants Foundry User to the agent identity explicitly.
+#
+# The agent's `knowledge_base_search` tool also calls Azure AI Search directly,
+# so the same agent identity is granted the Search data-plane roles too. Both
+# grants are best effort and use the identity in AGENT_PRINCIPAL_ID (below).
 #
 # Docs: https://learn.microsoft.com/azure/foundry/agents/quickstarts/quickstart-hosted-agent?pivots=azd
 #
@@ -59,6 +62,9 @@ FOUNDRY_ACCOUNT_NAME="${FOUNDRY_ACCOUNT_NAME:-researchfoundry}"
 FOUNDRY_PROJECT_NAME="${FOUNDRY_PROJECT_NAME:-researchProject}"
 # Optional: pass the full ARM project id to run init non-interactively.
 FOUNDRY_PROJECT_ID="${FOUNDRY_PROJECT_ID:-}"
+
+# Built-in role IDs (assigned by ID so renamed display names don't break us).
+ROLE_FOUNDRY_USER="53ca6127-db72-4b80-b1b0-d745d6d5456d"  # Foundry User (model + runtime)
 
 # Search service for the agent-identity tool-access role grant.
 SEARCH_SERVICE_NAME="${SEARCH_SERVICE_NAME:-srch-demo1-d9129d}"
@@ -117,11 +123,22 @@ else
 fi
 
 # ---- 3. Provision + deploy --------------------------------------------------
+# Recent azd agent extensions scaffold a self-contained project into a
+# subdirectory named after the agent (its own azure.yaml / infra / .azure). If
+# that happened, provision and deploy must run from inside that subdirectory.
+AGENT_PROJECT_DIR="$ROOT_DIR"
+if [[ -f "$ROOT_DIR/$AGENT_NAME/azure.yaml" ]]; then
+  AGENT_PROJECT_DIR="$ROOT_DIR/$AGENT_NAME"
+  say "Using scaffolded agent project directory: $AGENT_PROJECT_DIR"
+fi
+
+pushd "$AGENT_PROJECT_DIR" >/dev/null
 say "Provisioning Azure resources (azd provision)"
 azd provision
 
 say "Deploying the hosted agent to Foundry Agent Service (azd deploy)"
 azd deploy
+popd >/dev/null
 
 # ---- 4. Surface the agent endpoint ------------------------------------------
 PROJECT_ENDPOINT="https://${FOUNDRY_ACCOUNT_NAME}.services.ai.azure.com/api/projects/${FOUNDRY_PROJECT_NAME}"
@@ -130,31 +147,67 @@ RESPONSES_URL="${PROJECT_ENDPOINT}/agents/${AGENT_NAME}/endpoint/protocols/opena
 say "Agent status:"
 azd ai agent show 2>/dev/null || true
 
-# ---- 5. Grant the agent identity the Search tool roles ----------------------
-# The knowledge_base_search tool calls Azure AI Search directly, so the
-# platform-created agent identity needs Search data-plane access. azd does NOT
-# do this (it only handles model + ACR + project access).
+# ---- 5. Grant the agent identity its data-plane roles -----------------------
+# The platform-created agent identity needs:
+#   * Foundry User at the project scope — REQUIRED for the hosted agent to
+#     provision/run (azd --no-prompt does not grant this; without it the agent
+#     fails to go active).
+#   * Search Index Data Reader + Search Service Contributor on the Search
+#     service — so the knowledge_base_search tool can query it directly.
+# All target the same identity (AGENT_PRINCIPAL_ID). Find it in the Foundry
+# portal under project → Agents → $AGENT_NAME → Identity, or in the agent
+# version JSON as instance_identity.principal_id. The identity is stable across
+# agent versions.
+FOUNDRY_RG="$(az cognitiveservices account list \
+  --query "[?name=='$FOUNDRY_ACCOUNT_NAME'] | [0].resourceGroup" -o tsv 2>/dev/null || true)"
 SEARCH_RG="$(az search service list \
   --query "[?name=='$SEARCH_SERVICE_NAME'] | [0].resourceGroup" -o tsv 2>/dev/null || true)"
 
-if [[ -n "$AGENT_PRINCIPAL_ID" && -n "$SEARCH_RG" ]]; then
-  SEARCH_ID="$(az search service show -n "$SEARCH_SERVICE_NAME" -g "$SEARCH_RG" --query id -o tsv)"
-  for ROLE in "Search Index Data Reader" "Search Service Contributor"; do
-    say "Granting agent identity '$ROLE' on $SEARCH_SERVICE_NAME"
-    az role assignment create \
-      --assignee-object-id "$AGENT_PRINCIPAL_ID" \
-      --assignee-principal-type ServicePrincipal \
-      --role "$ROLE" \
-      --scope "$SEARCH_ID" -o none 2>/dev/null || say "  (already assigned)"
-  done
-else
-  warn "Skipping Search role grant (set AGENT_PRINCIPAL_ID to automate it)."
-  warn "Find the principal under Foundry portal → project → Agents →"
-  warn "  $AGENT_NAME → Identity, then run:"
+if [[ -z "$AGENT_PRINCIPAL_ID" ]]; then
+  warn "AGENT_PRINCIPAL_ID not set — skipping agent-identity role grants."
+  warn "The hosted agent will FAIL to provision without 'Foundry User'. After"
+  warn "finding the identity (Foundry portal → Agents → $AGENT_NAME → Identity):"
+  warn "  PROJECT=<account-resource-id>/projects/$FOUNDRY_PROJECT_NAME"
   warn "  az role assignment create --assignee-object-id <id> \\"
   warn "    --assignee-principal-type ServicePrincipal \\"
-  warn "    --role 'Search Index Data Reader' --scope <search-resource-id>"
-  warn "  (repeat for 'Search Service Contributor')"
+  warn "    --role $ROLE_FOUNDRY_USER --scope \$PROJECT   # Foundry User"
+  warn "  (then 'Search Index Data Reader' + 'Search Service Contributor' on the"
+  warn "   Search service for knowledge_base_search)"
+else
+  # Foundry User at the project scope.
+  if [[ -n "$FOUNDRY_RG" ]]; then
+    FOUNDRY_ID="$(az cognitiveservices account show \
+      -n "$FOUNDRY_ACCOUNT_NAME" -g "$FOUNDRY_RG" --query id -o tsv)"
+    PROJECT_SCOPE="$FOUNDRY_ID/projects/$FOUNDRY_PROJECT_NAME"
+    say "Granting agent identity 'Foundry User' on project $FOUNDRY_PROJECT_NAME"
+    if OUT="$(az role assignment create \
+        --assignee-object-id "$AGENT_PRINCIPAL_ID" \
+        --assignee-principal-type ServicePrincipal \
+        --role "$ROLE_FOUNDRY_USER" --scope "$PROJECT_SCOPE" -o none 2>&1)"; then
+      say "  granted Foundry User"
+    elif grep -qi "already exists\|RoleAssignmentExists" <<<"$OUT"; then
+      say "  (already assigned)"
+    else
+      warn "  FAILED to grant Foundry User: $OUT"
+    fi
+  else
+    warn "Could not resolve Foundry account RG; grant 'Foundry User' manually."
+  fi
+
+  # Search data-plane roles for knowledge_base_search.
+  if [[ -n "$SEARCH_RG" ]]; then
+    SEARCH_ID="$(az search service show -n "$SEARCH_SERVICE_NAME" -g "$SEARCH_RG" --query id -o tsv)"
+    for ROLE in "Search Index Data Reader" "Search Service Contributor"; do
+      say "Granting agent identity '$ROLE' on $SEARCH_SERVICE_NAME"
+      az role assignment create \
+        --assignee-object-id "$AGENT_PRINCIPAL_ID" \
+        --assignee-principal-type ServicePrincipal \
+        --role "$ROLE" \
+        --scope "$SEARCH_ID" -o none 2>/dev/null || say "  (already assigned)"
+    done
+  else
+    warn "Could not resolve Search service RG; grant the Search roles manually."
+  fi
 fi
 
 # ---- 6. Summary -------------------------------------------------------------

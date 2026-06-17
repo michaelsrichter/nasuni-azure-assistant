@@ -228,8 +228,21 @@ fi
 
 # ---- 6. Frontend RBAC: invoke the Foundry hosted agent ----------------------
 # The sidecar's managed identity calls the Foundry agent's Responses endpoint.
-# Interacting with an agent is a data-plane action covered by the Foundry User
-# role (formerly "Azure AI User") at the project scope.
+# Invoking a hosted agent is a data-plane action whose authorization is
+# evaluated at the FOUNDRY ACCOUNT scope (not the project). The agent gateway
+# reports the missing permission as
+#   Microsoft.MachineLearningServices/workspaces/agents/action
+# which is satisfied by the broad CognitiveServices data action
+# (Microsoft.CognitiveServices/*) carried by "Cognitive Services User". Granting
+# only project-scoped roles results in a 403 — the account-scope grant is what
+# makes invocation work end-to-end.
+#
+# We assign roles by ID (the display names were recently changed: Azure AI User
+# → Foundry User, etc.) so the grant doesn't silently fail on a renamed role.
+ROLE_COGNITIVE_SERVICES_USER="a97b65f3-24c7-4388-baec-2e87b95c1773"  # Cognitive Services User
+ROLE_FOUNDRY_AGENT_CONSUMER="eed3b665-ab3a-47b6-8f48-c9382fb1dad6"   # Foundry Agent Consumer (agent invoke/interact)
+ROLE_FOUNDRY_PROJECT_RUNTIME_USER="142bfaed-a13f-4c2d-bed2-6db62c4a1009"  # Foundry Project Runtime User (responses/*)
+
 FRONTEND_MI_PRINCIPAL_ID="$(az containerapp identity show \
   -n "$FRONTEND_APP" -g "$RESOURCE_GROUP" \
   --query principalId -o tsv 2>/dev/null || true)"
@@ -238,19 +251,34 @@ say "Frontend managed identity: ${FRONTEND_MI_PRINCIPAL_ID:-<none>}"
 FOUNDRY_RG="$(az cognitiveservices account list \
   --query "[?name=='$FOUNDRY_ACCOUNT_NAME'] | [0].resourceGroup" -o tsv 2>/dev/null || true)"
 
+grant_role() {  # <role-id> <scope> <description>
+  local role="$1" scope="$2" desc="$3" out
+  if out="$(az role assignment create \
+      --assignee-object-id "$FRONTEND_MI_PRINCIPAL_ID" \
+      --assignee-principal-type ServicePrincipal \
+      --role "$role" --scope "$scope" -o none 2>&1)"; then
+    say "  granted: $desc"
+  elif grep -qi "already exists\|RoleAssignmentExists" <<<"$out"; then
+    say "  (already assigned) $desc"
+  else
+    warn "  FAILED to grant $desc: $out"
+  fi
+}
+
 if [[ -n "$FRONTEND_MI_PRINCIPAL_ID" && -n "$FOUNDRY_RG" ]]; then
   FOUNDRY_ID="$(az cognitiveservices account show \
     -n "$FOUNDRY_ACCOUNT_NAME" -g "$FOUNDRY_RG" --query id -o tsv)"
   PROJECT_SCOPE="$FOUNDRY_ID/projects/$FOUNDRY_PROJECT_NAME"
-  say "Granting frontend MI 'Azure AI User' on project $FOUNDRY_PROJECT_NAME"
-  az role assignment create \
-    --assignee-object-id "$FRONTEND_MI_PRINCIPAL_ID" \
-    --assignee-principal-type ServicePrincipal \
-    --role "Azure AI User" \
-    --scope "$PROJECT_SCOPE" -o none 2>/dev/null || say "  (already assigned)"
+  say "Granting frontend MI agent-invoke roles"
+  # Account-scope grant is the one that actually authorizes agent invocation.
+  grant_role "$ROLE_COGNITIVE_SERVICES_USER"        "$FOUNDRY_ID"    "Cognitive Services User @ account"
+  # Project-scope purpose-built roles for the Responses runtime.
+  grant_role "$ROLE_FOUNDRY_AGENT_CONSUMER"         "$PROJECT_SCOPE" "Foundry Agent Consumer @ project"
+  grant_role "$ROLE_FOUNDRY_PROJECT_RUNTIME_USER"   "$PROJECT_SCOPE" "Foundry Project Runtime User @ project"
 else
-  warn "Could not resolve frontend MI or Foundry account; grant 'Azure AI User'"
-  warn "on the project to the frontend app's identity manually."
+  warn "Could not resolve frontend MI or Foundry account. Manually grant the"
+  warn "frontend app identity 'Cognitive Services User' on the Foundry ACCOUNT"
+  warn "($FOUNDRY_ACCOUNT_NAME) to allow it to invoke the hosted agent."
 fi
 
 FRONTEND_FQDN="$(az containerapp show \
