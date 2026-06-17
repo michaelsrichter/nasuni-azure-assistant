@@ -1,5 +1,20 @@
 # Operations
 
+## Hosted-agent execution model (default)
+
+The `chatbot-api` backend runs in one of two modes, controlled by `Demo1__UseHostedAgent`:
+
+| Mode | DI class | Flow |
+| --- | --- | --- |
+| `true` (default in ACA) | `AgentChatService` | UI → backend → **hosted agent** → tool-call → backend → KB → MCP → answer |
+| `false` (local dev fallback) | `ChatService` | UI → backend → KB → MCP → backend LLM call → answer |
+
+In hosted-agent mode, the backend creates a thread, posts the user's message, starts a run on `Demo1__HostedAgentId`, and polls until the run reports `RequiresAction`. The required action is a single `knowledge_base_search` function call; the backend executes it against the Knowledge Base, submits the references back as `ToolOutput`, and waits for the agent to finish writing the answer. Citations are extracted from the KB's `Response[0].Content[0].Text` JSON (see `backend/ChatbotApi/KbCitationParser.cs`).
+
+The agent owns the system prompt, model, temperature, and citation contract — all editable from the Foundry portal under *project → Agents → kb-mslearn-hosted*. The infra command `ensure-hosted-agent` re-applies the canonical instructions and writes the agent id to `state.json`.
+
+Required RBAC for the backend SAMI (or your local `az login` principal) is documented in *Deploying to Azure Container Apps* below.
+
 ## Re-running provisioning
 
 All `ensure-*` commands are idempotent and re-runnable. State is persisted to `state.json` at the repo root (gitignored).
@@ -89,9 +104,9 @@ azd deploy
 
 After deploy, set `HOSTED_AGENT_NAME=kb-mslearn-hosted` on the backend and restart — the backend will route via the Responses API to the hosted agent instead of orchestrating in-process. The UI is unchanged.
 
-## Foundry Hosted Agent (portal-visible, MCP-tool)
+## Foundry Hosted Agent (portal-visible, function-tool)
 
-In addition to the in-process orchestrator, the repo provisions a persistent Foundry agent that appears in the portal under *project → Agents*:
+The repo provisions a persistent Foundry agent that appears in the portal under *project → Agents* and serves as the entrypoint for `/api/chat`:
 
 ```bash
 dotnet run --project infra/Demo1.Infra -- ensure-hosted-agent
@@ -101,10 +116,13 @@ What it does:
 
 - Uses `Azure.AI.Agents.Persistent` 1.2.0-beta.8 (`PersistentAgentsClient.Administration.CreateAgentAsync` / `UpdateAgentAsync`).
 - Creates an agent named `kb-mslearn-hosted` (from `hostedAgentName` in [infra/Demo1.Infra/appsettings.json](infra/Demo1.Infra/appsettings.json)) using the project's `gpt-4.1-mini` deployment.
-- Attaches a single `MCPToolDefinition` pointing at `https://learn.microsoft.com/api/mcp`.
+- Attaches a single `FunctionToolDefinition` named `knowledge_base_search` with a JSON-schema `{ query: string }`. The backend executes that function against the KB whenever the run reaches `RequiresAction`.
+- The agent's instructions tell it to (1) call `knowledge_base_search` with a focused query, (2) answer using only the returned references, (3) cite every factual claim with `[n]`.
 - Idempotent: re-running detects the existing agent by name and updates it in place. The id is persisted to `state.json` as `hostedAgentId`.
 
-Verify in the portal: open https://ai.azure.com → project `researchProject` → **Agents**. The `kb-mslearn-hosted` row will show the MCP tool and the model.
+Verify in the portal: open https://ai.azure.com → project `researchProject` → **Agents**. The `kb-mslearn-hosted` row shows the function tool and the model. Tool runs and submitted outputs are visible per-thread in the *Threads* panel.
+
+Why a function tool and not the typed `KnowledgeBaseToolDefinition`? The 1.2.0-beta.8 SDK ships a partial type, but its server-side routing is not yet enabled for our project/region. The function-tool fallback keeps the agent contract identical (single tool, JSON-schema arguments) and lets the backend authenticate to the KB as the SAMI it already has. When the typed tool is GA, this is a one-class change in `AgentChatService.cs`.
 
 ## Deploying to Azure Container Apps
 
@@ -131,8 +149,11 @@ What the script does, in order:
 
 1. Ensures the resource group, ACA environment, and ACR exist.
 2. `az acr build` for the backend Dockerfile, then `az containerapp create` (or `update`) with the resulting image.
-3. Enables a system-assigned managed identity on the backend and sets `Demo1__*` env vars.
-4. Assigns `Cognitive Services OpenAI User` on the Foundry account and `Search Index Data Reader` on the Search service to the SAMI.
+3. Enables a system-assigned managed identity on the backend and sets `Demo1__*` env vars — including `Demo1__UseHostedAgent=true`, `Demo1__ProjectEndpoint`, and `Demo1__HostedAgentId` (read from `infra/state.json` if present).
+4. Assigns these roles to the SAMI:
+   - On the Foundry **account**: `Cognitive Services OpenAI User`, `Cognitive Services User`, `Azure AI Administrator` (the last is what unblocks the agent threads/runs data action set; `Azure AI Developer` alone is not enough).
+   - On the Foundry **project**: `Cognitive Services User`, `Azure AI Developer`.
+   - On the **Search** service: `Search Index Data Reader` (for `KB.Retrieve`) and `Search Service Contributor` (so the SDK can resolve the KB definition).
 5. `az acr build` for the frontend Dockerfile, then `az containerapp create` (or `update`) for `chatbot-web`.
 6. Sets `BACKEND_URL` (full https URL) and `BACKEND_HOST` (FQDN only) on the frontend container; nginx's envsubst entrypoint stamps those into [frontend/nginx.conf.template](frontend/nginx.conf.template) at start.
 
@@ -148,7 +169,7 @@ curl -X POST https://chatbot-web.<env-default-domain>/api/chat \
   -d '{"question":"What is Azure Storage?"}'
 ```
 
-A successful response body includes `"source":"kb"` (KB path) or `"source":"mcp"` (direct MCP fallback when the KB returns 401 from its sticky managed-identity cache).
+A successful response body includes `"source":"agent"` (the default, hosted-agent path) with non-empty `citations[]` (each row has `title`, `url`, and a `snippet`). If `"source":"knowledgeBase"` or `"mcp"` appears, the deploy is using the legacy in-process orchestration (`Demo1__UseHostedAgent` is not `true`).
 
 ### Container logs
 
@@ -183,8 +204,12 @@ proxy_ssl_name        $backend_host;
 | `ensure-kb` hangs > 2 min | KB validating MCP endpoint | Wait — the MS Learn MCP endpoint is the gating dependency |
 | Chat returns empty answer with `traceId` | KB retrieval succeeded but model declined | Check system prompt; check `gen_ai.completion` in the trace |
 | `/api/chat` returns 401 | Stale `az login` (local) or RBAC not yet propagated (ACA) | `az login --tenant <tenant>` and restart; in ACA, wait 5–10 min after first deploy |
+| `/api/chat` returns 500 with body `Principal lacks ... AIServices/agents/read` | Backend SAMI only has `Azure AI Developer`, which doesn't include the persistent-agents data action set | Grant `Azure AI Administrator` on the Foundry account and `Cognitive Services User` on both account and project; restart the revision |
+| `/api/chat` returns 500 with body `Principal does not have access to API/Operation.` immediately after role grants | Token in the SAMI's in-process cache predates the role assignment | `az containerapp revision restart` (or wait for the next replica restart). Re-tokens are fetched on-demand but cached ones are not invalidated. |
+| `KB returned 0 references` in `ensure-agent` smoke test | KB's AzureOpenAI vectorizer pointed at `cognitiveservices.azure.com` instead of `openai.azure.com` | Re-run `ensure-kb` — the `EnsureKnowledgeBaseCommand` now uses the correct host. The cognitive-services host returns 401 because the Foundry account has `disableLocalAuth=true` and the bearer audience does not match. |
 | Eval page shows all `null` | Evaluator deployment not provisioned in the project | Confirm `gpt-4.1-mini` deployment exists |
 | Frontend in ACA returns 502 on `POST /api/chat` while backend `curl` works | nginx not sending SNI to ACA ingress | Confirm `BACKEND_HOST` is set (FQDN, no scheme) and that `proxy_ssl_server_name on; proxy_ssl_name $backend_host;` is in `nginx.conf.template`; redeploy frontend |
 | `az containerapp up --source` fails with `'NoneType' object has no attribute 'linux'` | Regression in `containerapp` CLI extension 1.3.0b4 | Use `deploy/deploy-aca.sh` (which uses `az acr build` + `containerapp create/update` explicitly) |
 | ACA backend logs show `Cognitive Services OpenAI`/Search `Forbidden` immediately after deploy | RBAC not yet propagated to SAMI | Wait 5–10 min and retry; verify with `az role assignment list --assignee <principal>` |
 | `kb-mslearn-hosted` agent missing from portal | `ensure-hosted-agent` not run | `dotnet run --project infra/Demo1.Infra -- ensure-hosted-agent` |
+| Response has `"source":"knowledgeBase"` or `"mcp"` instead of `"agent"` | `Demo1__UseHostedAgent` is not `true`, or `Demo1__HostedAgentId` is empty | Set both env vars and restart the revision; deploy script does this automatically |

@@ -89,7 +89,7 @@ public sealed class ChatService : IChatService
                     }
                 };
                 var resp = await _kb.RetrieveAsync(req, cancellationToken: ct);
-                var citations = ExtractCitations(resp.Value);
+                var citations = KbCitationParser.Extract(resp.Value);
                 if (citations.Count > 0)
                 {
                     act?.SetTag("kb.citations.count", citations.Count);
@@ -107,17 +107,7 @@ public sealed class ChatService : IChatService
     }
 
     private static List<Citation> ExtractCitations(KnowledgeBaseRetrievalResponse resp)
-    {
-        var list = new List<Citation>();
-        foreach (var r in resp.References ?? [])
-        {
-            list.Add(new Citation(
-                Title: r.SourceData?.TryGetValue("title", out var t) == true ? t?.ToString() ?? "" : r.Id ?? "",
-                Url: r.SourceData?.TryGetValue("url", out var u) == true ? u?.ToString() ?? "" : "",
-                Snippet: r.SourceData?.TryGetValue("content", out var c) == true ? c?.ToString() : null));
-        }
-        return list;
-    }
+        => KbCitationParser.Extract(resp).ToList();
 
     private List<OpenAI.Chat.ChatMessage> BuildMessages(ChatRequest req, IReadOnlyList<Citation> citations)
     {

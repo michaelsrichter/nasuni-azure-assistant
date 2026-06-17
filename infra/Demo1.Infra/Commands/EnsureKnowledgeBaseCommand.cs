@@ -57,9 +57,12 @@ public static class EnsureKnowledgeBaseCommand
         };
 
         // Add an Azure OpenAI model so the KB can call the LLM for query planning / answer synthesis.
+        // The account's OpenAI surface lives at the .openai.azure.com host (the .cognitiveservices.azure.com
+        // host doesn't route OpenAI calls when disableLocalAuth=true). The Search service's system-assigned
+        // managed identity must hold `Cognitive Services OpenAI User` on the Foundry account (see ensure-search).
         kb.Models.Add(new KnowledgeBaseAzureOpenAIModel(new AzureOpenAIVectorizerParameters
         {
-            ResourceUri = new Uri($"https://{cfg.FoundryAccountName}.cognitiveservices.azure.com/"),
+            ResourceUri = new Uri($"https://{cfg.FoundryAccountName}.openai.azure.com/"),
             DeploymentName = cfg.ModelDeploymentName,
             ModelName = AzureOpenAIModelName.Gpt41Mini,
         }));

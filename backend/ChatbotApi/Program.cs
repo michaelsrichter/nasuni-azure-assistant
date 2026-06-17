@@ -12,7 +12,14 @@ builder.Services.AddSingleton(opts);
 builder.Services.AddSingleton<TokenCredential>(_ => new Azure.Identity.DefaultAzureCredential());
 
 builder.Services.AddHttpClient<McpDocsClient>();
-builder.Services.AddSingleton<IChatService, ChatService>();
+if (opts.UseHostedAgent)
+{
+    builder.Services.AddSingleton<IChatService, AgentChatService>();
+}
+else
+{
+    builder.Services.AddSingleton<IChatService, ChatService>();
+}
 
 builder.Services.AddCors(o => o.AddDefaultPolicy(p => p
     .WithOrigins(builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? ["http://localhost:5173"])

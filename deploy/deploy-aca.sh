@@ -59,11 +59,27 @@ IMAGE_TAG="${IMAGE_TAG:-$(date +%Y%m%d-%H%M%S)}"
 # Resources from the infra CLI (override if you re-provisioned).
 DEMO1__SEARCHENDPOINT="${DEMO1__SEARCHENDPOINT:-https://srch-demo1-d9129d.search.windows.net}"
 DEMO1__KNOWLEDGEBASENAME="${DEMO1__KNOWLEDGEBASENAME:-kb-mslearn}"
-DEMO1__FOUNDRYOPENAIENDPOINT="${DEMO1__FOUNDRYOPENAIENDPOINT:-https://researchfoundry.cognitiveservices.azure.com}"
+# Note: the Foundry OpenAI endpoint *must* use the openai.azure.com host so the
+# KB's Azure OpenAI vectorizer (managed identity) authenticates correctly. The
+# cognitiveservices.azure.com host returns 401 because the account has
+# disableLocalAuth=true. See docs/operations.md for the diagnosis.
+DEMO1__FOUNDRYOPENAIENDPOINT="${DEMO1__FOUNDRYOPENAIENDPOINT:-https://researchfoundry.openai.azure.com}"
 DEMO1__CHATDEPLOYMENT="${DEMO1__CHATDEPLOYMENT:-gpt-4.1-mini}"
 DEMO1__MCPSERVERURL="${DEMO1__MCPSERVERURL:-https://learn.microsoft.com/api/mcp}"
 
+# Hosted-agent execution path. When UseHostedAgent=true the backend delegates
+# orchestration to a portal-visible Foundry agent that invokes a single
+# `knowledge_base_search` function tool; the backend executes that tool against
+# the KB (which fans out to MCP and any other knowledge sources the KB owns).
+DEMO1__USEHOSTEDAGENT="${DEMO1__USEHOSTEDAGENT:-true}"
+DEMO1__PROJECTENDPOINT="${DEMO1__PROJECTENDPOINT:-https://researchfoundry.services.ai.azure.com/api/projects/researchProject}"
+# Default reads hostedAgentId from infra/state.json if present so the value
+# always matches the most recent `infra ensure-agent` run.
+DEMO1__HOSTEDAGENTID_DEFAULT="$(jq -r '.hostedAgentId // empty' infra/state.json 2>/dev/null || true)"
+DEMO1__HOSTEDAGENTID="${DEMO1__HOSTEDAGENTID:-${DEMO1__HOSTEDAGENTID_DEFAULT:-asst_QYxAByzcXx0whX2p04qZjP3b}}"
+
 FOUNDRY_ACCOUNT_NAME="${FOUNDRY_ACCOUNT_NAME:-researchfoundry}"
+FOUNDRY_PROJECT_NAME="${FOUNDRY_PROJECT_NAME:-researchProject}"
 SEARCH_SERVICE_NAME="${SEARCH_SERVICE_NAME:-srch-demo1-d9129d}"
 
 # ---- Helpers ----------------------------------------------------------------
@@ -198,6 +214,9 @@ az containerapp update \
     "Demo1__FoundryOpenAIEndpoint=$DEMO1__FOUNDRYOPENAIENDPOINT" \
     "Demo1__ChatDeployment=$DEMO1__CHATDEPLOYMENT" \
     "Demo1__McpServerUrl=$DEMO1__MCPSERVERURL" \
+    "Demo1__UseHostedAgent=$DEMO1__USEHOSTEDAGENT" \
+    "Demo1__ProjectEndpoint=$DEMO1__PROJECTENDPOINT" \
+    "Demo1__HostedAgentId=$DEMO1__HOSTEDAGENTID" \
     "ASPNETCORE_ENVIRONMENT=Production" \
   -o none
 
@@ -221,13 +240,45 @@ SEARCH_RG="$(az search service list \
 if [[ -n "$FOUNDRY_RG" ]]; then
   FOUNDRY_ID="$(az cognitiveservices account show \
     -n "$FOUNDRY_ACCOUNT_NAME" -g "$FOUNDRY_RG" --query id -o tsv)"
-  say "Granting 'Cognitive Services OpenAI User' on $FOUNDRY_ACCOUNT_NAME"
-  az role assignment create \
-    --assignee-object-id "$BACKEND_MI_PRINCIPAL_ID" \
-    --assignee-principal-type ServicePrincipal \
-    --role "Cognitive Services OpenAI User" \
-    --scope "$FOUNDRY_ID" -o none 2>/dev/null || \
-    say "  (already assigned)"
+  PROJECT_SCOPE="$FOUNDRY_ID/projects/$FOUNDRY_PROJECT_NAME"
+
+  # Roles required by the hosted-agent path (in addition to the in-process
+  # path's 'Cognitive Services OpenAI User'):
+  #   * Cognitive Services User (account scope) — generic data-plane read
+  #     against AIServices/* endpoints. Foundry has disableLocalAuth=true so
+  #     this is the role that makes our SAMI an "interactive" caller for the
+  #     project's REST surfaces (threads, messages, runs).
+  #   * Azure AI Administrator (account scope) — grants the broad
+  #     'Microsoft.CognitiveServices/*' data action set the persistent-agents
+  #     API requires (specifically AIServices/agents/read on POST .../threads).
+  #     'Azure AI Developer' is NOT sufficient — its dataActions list is
+  #     limited to OpenAI/SpeechServices/ContentSafety/MaaS.
+  #   * Cognitive Services User (project scope) — required because Foundry
+  #     enforces project-level RBAC on the project sub-resource.
+  for ROLE in \
+      "Cognitive Services OpenAI User" \
+      "Cognitive Services User" \
+      "Azure AI Administrator"; do
+    say "Granting '$ROLE' on $FOUNDRY_ACCOUNT_NAME"
+    az role assignment create \
+      --assignee-object-id "$BACKEND_MI_PRINCIPAL_ID" \
+      --assignee-principal-type ServicePrincipal \
+      --role "$ROLE" \
+      --scope "$FOUNDRY_ID" -o none 2>/dev/null || \
+      say "  (already assigned)"
+  done
+
+  for ROLE in \
+      "Cognitive Services User" \
+      "Azure AI Developer"; do
+    say "Granting '$ROLE' on project $FOUNDRY_PROJECT_NAME"
+    az role assignment create \
+      --assignee-object-id "$BACKEND_MI_PRINCIPAL_ID" \
+      --assignee-principal-type ServicePrincipal \
+      --role "$ROLE" \
+      --scope "$PROJECT_SCOPE" -o none 2>/dev/null || \
+      say "  (already assigned)"
+  done
 else
   warn "Foundry account '$FOUNDRY_ACCOUNT_NAME' not found; skipping role assignment"
 fi
@@ -235,13 +286,20 @@ fi
 if [[ -n "$SEARCH_RG" ]]; then
   SEARCH_ID="$(az search service show \
     -n "$SEARCH_SERVICE_NAME" -g "$SEARCH_RG" --query id -o tsv)"
-  say "Granting 'Search Index Data Reader' on $SEARCH_SERVICE_NAME"
-  az role assignment create \
-    --assignee-object-id "$BACKEND_MI_PRINCIPAL_ID" \
-    --assignee-principal-type ServicePrincipal \
-    --role "Search Index Data Reader" \
-    --scope "$SEARCH_ID" -o none 2>/dev/null || \
-    say "  (already assigned)"
+  # 'Search Index Data Reader' lets the backend call KB.Retrieve;
+  # 'Search Service Contributor' lets it read the KB definition itself
+  # (required by the SDK to resolve the KB name → backing index).
+  for ROLE in \
+      "Search Index Data Reader" \
+      "Search Service Contributor"; do
+    say "Granting '$ROLE' on $SEARCH_SERVICE_NAME"
+    az role assignment create \
+      --assignee-object-id "$BACKEND_MI_PRINCIPAL_ID" \
+      --assignee-principal-type ServicePrincipal \
+      --role "$ROLE" \
+      --scope "$SEARCH_ID" -o none 2>/dev/null || \
+      say "  (already assigned)"
+  done
 else
   warn "Search service '$SEARCH_SERVICE_NAME' not found; skipping role assignment"
 fi

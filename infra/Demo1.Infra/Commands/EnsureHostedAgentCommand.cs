@@ -6,17 +6,21 @@ namespace Demo1.Infra.Commands;
 
 /// <summary>
 /// Creates (or updates) a Foundry Hosted Agent that grounds answers via the
-/// MS Learn MCP server. The agent appears in the Foundry portal under the
-/// project's Agents tab and can be invoked through the Persistent Agents API
-/// (the classic Foundry Agents / Assistants surface).
+/// MS Learn KB (kb-mslearn → ks-mslearn-mcp → MS Learn MCP server). The agent
+/// is portal-visible (project → Agents) and is invoked by the backend through
+/// the standard threads + runs flow.
 ///
-/// The KB (<c>kb-mslearn</c>) ultimately wraps the same MCP endpoint, so an
-/// MCP-tool hosted agent gives the same grounding without the extra KB hop
-/// (and avoids the sticky-cache 401 we sometimes see on freshly-granted
-/// Search managed identities).
+/// Tool design: the agent exposes a single function tool `knowledge_base_search`.
+/// When the agent invokes it, the backend (acting as the tool executor) calls
+/// the KB's <c>RetrieveAsync</c> and returns the references as the tool output.
+/// This keeps the KB as the authoritative grounding surface (so additional
+/// knowledge sources added to the KB later are picked up automatically) while
+/// the agent owns the orchestration / answer synthesis.
 /// </summary>
 public static class EnsureHostedAgentCommand
 {
+    public const string KnowledgeBaseToolName = "knowledge_base_search";
+
     public static async Task<int> RunAsync(InfraConfig cfg, InfraState state, string statePath)
     {
         Console.WriteLine("=== ensure-hosted-agent ===");
@@ -36,16 +40,35 @@ public static class EnsureHostedAgentCommand
 
         var instructions = """
             You are an expert assistant for Microsoft Azure, .NET, and the broader Microsoft developer platform.
-            Answer the user's question using ONLY information returned by the mslearn MCP server.
-            Call the microsoft_docs_search tool with a focused query derived from the user's question.
-            Cite every factual claim with a numbered reference like [1] that maps to the source URLs.
-            If the MCP server returns nothing relevant, say so plainly rather than guessing.
+
+            For every user question:
+              1. Call the `knowledge_base_search` function with a focused query derived from the question.
+              2. Read the returned references and write an answer using ONLY information from those references.
+              3. Cite every factual claim with a bracketed number like [1] that maps to the references the tool returned, in order.
+              4. If the references do not contain the answer, say so plainly rather than guessing.
+
             Keep answers concise and developer-focused, with code samples when they help.
+            """;
+
+        var parametersJson = """
+            {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string",
+                  "description": "A focused search query derived from the user's question. Prefer specific API or product names."
+                }
+              },
+              "required": ["query"]
+            }
             """;
 
         var tools = new List<ToolDefinition>
         {
-            new MCPToolDefinition("mslearn", cfg.McpServerUrl),
+            new FunctionToolDefinition(
+                name: KnowledgeBaseToolName,
+                description: $"Retrieve grounding passages from the Microsoft Learn knowledge base ({cfg.KnowledgeBaseName}). Returns a JSON array of {{ index, title, url, snippet }} entries.",
+                parameters: BinaryData.FromString(parametersJson)),
         };
 
         Response<PersistentAgent> response;
@@ -56,7 +79,7 @@ public static class EnsureHostedAgentCommand
                 assistantId: existingId,
                 model: cfg.ModelDeploymentName,
                 name: cfg.HostedAgentName,
-                description: "Grounds answers via the MS Learn MCP server.",
+                description: $"Grounds answers via the '{cfg.KnowledgeBaseName}' knowledge base (backend-executed function tool).",
                 instructions: instructions,
                 tools: tools);
         }
@@ -66,7 +89,7 @@ public static class EnsureHostedAgentCommand
             response = await client.Administration.CreateAgentAsync(
                 model: cfg.ModelDeploymentName,
                 name: cfg.HostedAgentName,
-                description: "Grounds answers via the MS Learn MCP server.",
+                description: $"Grounds answers via the '{cfg.KnowledgeBaseName}' knowledge base (backend-executed function tool).",
                 instructions: instructions,
                 tools: tools);
         }
@@ -75,7 +98,7 @@ public static class EnsureHostedAgentCommand
         state.HostedAgentId = agent.Id;
         state.Save(statePath);
 
-        Console.WriteLine($"  OK: agent id={agent.Id}");
+        Console.WriteLine($"  OK: agent id={agent.Id}, tool='{KnowledgeBaseToolName}'");
         Console.WriteLine($"  Visit https://ai.azure.com → project '{cfg.ProjectName}' → Agents to see '{agent.Name}'.");
         return 0;
     }
