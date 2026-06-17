@@ -6,10 +6,6 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
-    // Allow importing docs/architecture.md (one level above the Vite root).
-    fs: {
-      allow: ['..'],
-    },
     proxy: {
       '/api': {
         target: 'http://localhost:5119',

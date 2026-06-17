@@ -56,6 +56,10 @@ FOUNDRY_TOKEN_SCOPE="${FOUNDRY_TOKEN_SCOPE:-https://ai.azure.com/.default}"
 #     is supplied explicitly. Set APPINSIGHTS_NAME='' to skip provisioning.
 #   * Clarity — supply CLARITY_PROJECT_ID to enable; empty = disabled (no-op).
 APPINSIGHTS_NAME="${APPINSIGHTS_NAME:-appi-demo1}"
+# App Insights isn't available in every region (e.g. westcentralus). It can live
+# in a different region than the Container App — the connection string carries
+# its own ingestion endpoint — so default to a supported nearby region.
+APPINSIGHTS_LOCATION="${APPINSIGHTS_LOCATION:-westus2}"
 APPLICATIONINSIGHTS_CONNECTION_STRING="${APPLICATIONINSIGHTS_CONNECTION_STRING:-}"
 CLARITY_PROJECT_ID="${CLARITY_PROJECT_ID:-}"
 
@@ -149,10 +153,10 @@ if [[ -z "$APPLICATIONINSIGHTS_CONNECTION_STRING" && -n "$APPINSIGHTS_NAME" ]]; 
   if az monitor app-insights component show --app "$APPINSIGHTS_NAME" -g "$RESOURCE_GROUP" >/dev/null 2>&1; then
     say "Reusing Application Insights component '$APPINSIGHTS_NAME'"
   else
-    say "Creating Application Insights component '$APPINSIGHTS_NAME'"
+    say "Creating Application Insights component '$APPINSIGHTS_NAME' in $APPINSIGHTS_LOCATION"
     az monitor app-insights component create \
       --app "$APPINSIGHTS_NAME" \
-      --location "$LOCATION" \
+      --location "$APPINSIGHTS_LOCATION" \
       --resource-group "$RESOURCE_GROUP" \
       --kind web \
       --application-type web \
@@ -176,6 +180,12 @@ fi
 # ---- 4. Build images (frontend only) ----------------------------------------
 FRONTEND_IMAGE="$ACR_LOGIN_SERVER/$FRONTEND_APP:$IMAGE_TAG"
 PROXY_IMAGE="$ACR_LOGIN_SERVER/$PROXY_CONTAINER:$IMAGE_TAG"
+
+# Sync the canonical architecture doc into the frontend build context so the
+# in-app /architecture page bundles it (docs/ is outside the Docker context).
+say "Syncing docs/architecture.md into frontend/src/content"
+mkdir -p frontend/src/content
+cp docs/architecture.md frontend/src/content/architecture.md
 
 say "Building frontend (nginx) image $FRONTEND_IMAGE (ACR Tasks)"
 az acr build \

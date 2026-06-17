@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-// Raw markdown is bundled at build time; `server.fs.allow` permits the dev read.
-import architectureMd from '../../../docs/architecture.md?raw';
+// Bundled at build time. Kept in sync from docs/architecture.md by the deploy
+// script (and committed) so it lives inside the frontend Docker build context.
+import architectureMd from '../content/architecture.md?raw';
 
 type ThemeAttr = 'light' | 'dark';
 
