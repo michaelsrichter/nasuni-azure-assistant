@@ -1,5 +1,8 @@
 <Solution>
-  <Folder Name="/backend/">
-    <Project Path="backend/ChatbotApi/ChatbotApi.csproj" />
+  <Folder Name="/hosted-agent/">
+    <Project Path="hosted-agent/Demo1.Agent.csproj" />
+  </Folder>
+  <Folder Name="/infra/">
+    <Project Path="infra/Demo1.Infra/Demo1.Infra.csproj" />
   </Folder>
 </Solution>

@@ -7,12 +7,18 @@
 // through to the agent. nginx in front of it proxies /api/responses here.
 
 import http from 'node:http';
+import https from 'node:https';
 import { DefaultAzureCredential } from '@azure/identity';
 
 const PORT = Number(process.env.PROXY_PORT ?? 8090);
 const HOST = process.env.PROXY_HOST ?? '127.0.0.1';
 const AGENT_ENDPOINT = required('FOUNDRY_AGENT_ENDPOINT'); // e.g. https://<agent>.<region>.foundry.azure.com
-const TOKEN_SCOPE = process.env.FOUNDRY_TOKEN_SCOPE ?? 'https://ai.azure.com/.default';
+// Set FOUNDRY_TOKEN_SCOPE='' to disable Entra token acquisition (e.g. when the
+// upstream is an ACA-internal hosted-agent container with open ingress).
+const TOKEN_SCOPE =
+  process.env.FOUNDRY_TOKEN_SCOPE === undefined
+    ? 'https://ai.azure.com/.default'
+    : process.env.FOUNDRY_TOKEN_SCOPE;
 
 function required(name) {
   const v = process.env[name];
@@ -27,6 +33,7 @@ const credential = new DefaultAzureCredential();
 let cached = null; // { token: string, expiresOn: number }
 
 async function getToken() {
+  if (!TOKEN_SCOPE) return null;
   const now = Date.now();
   if (cached && cached.expiresOn - now > 5 * 60 * 1000) return cached.token;
   const result = await credential.getToken(TOKEN_SCOPE);
@@ -59,21 +66,23 @@ const server = http.createServer(async (req, res) => {
     for await (const c of req) chunks.push(c);
     const body = Buffer.concat(chunks);
 
-    const upstreamReq = http.request(
+    const headers = {
+      'Content-Type': 'application/json',
+      'Content-Length': String(body.length),
+      'x-agent-user-isolation-key': userKey,
+      'x-agent-chat-isolation-key': chatKey,
+      Accept: req.headers.accept ?? 'text/event-stream',
+    };
+    if (token) headers.Authorization = `Bearer ${token}`;
+
+    const upstreamReq = (upstream.protocol === 'https:' ? https : http).request(
       {
         protocol: upstream.protocol,
         hostname: upstream.hostname,
         port: upstream.port || (upstream.protocol === 'https:' ? 443 : 80),
         path: upstream.pathname + upstream.search,
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': String(body.length),
-          Authorization: `Bearer ${token}`,
-          'x-agent-user-isolation-key': userKey,
-          'x-agent-chat-isolation-key': chatKey,
-          Accept: req.headers.accept ?? 'text/event-stream',
-        },
+        headers,
       },
       (upstreamRes) => {
         const headers = { ...upstreamRes.headers };

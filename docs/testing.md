@@ -4,35 +4,38 @@
 
 | Project | Layer | Framework | Covers |
 | --- | --- | --- | --- |
-| `tests/Demo1.Infra.Tests` | infra | xUnit + Moq | Config load/save round-trip, state persistence, command argument routing, role-assignment idempotency logic (with mocked ARM) |
-| `tests/ChatbotApi.Tests` | backend | xUnit + Moq | `IChatService.AnswerAsync` happy path (KB called → grounding injected), KB error path (returns 502 with diagnostic body), `IAppInsightsResolver` discovery, eval service result shaping |
-| `tests/HostedAgent.Tests` | hosted agent | xUnit + Moq | Same `IChatService` shape as backend, exercised through the agent's request handler |
-| `frontend/src/__tests__/` | UI | Vitest + React Testing Library | `ChatPanel` sends request and renders tool activity; `EvalPanel` renders table and handles loading state |
+| `infra/Demo1.Infra` | infra | `dotnet build` + `ensure-*` smoke run | Real provisioning (idempotent) — the commands themselves are the test |
+| `hosted-agent/` | agent | `dotnet build` + curl-based smoke against the running `/responses` endpoint | Function-tool routing, citation parsing, streaming SSE contract |
+| `frontend/src/test/sse.test.ts` | UI | Vitest | SSE parser handles chunk boundaries, multi-line `data`, CRLF, comments, default `message` event |
+| `frontend/src/test/pricing.test.ts` | UI | Vitest | `estimateCost` math, `formatCost` formatting, unknown-model fallback |
+| `frontend/src/test/ChatPanel.test.tsx` | UI | Vitest + Testing Library | Streams a real `ReadableStream` of SSE frames into the panel; asserts tool pill, citation links, and usage footer render |
 
 ## Running
 
 ```bash
-# All .NET tests in one go
-dotnet test demo1.sln
+# Hosted-agent build + (optional) local smoke
+cd hosted-agent
+dotnet build
+dotnet run                       # then curl /responses as documented in operations.md
 
-# Single project
-dotnet test tests/ChatbotApi.Tests/ChatbotApi.Tests.csproj
+# Infra tool
+dotnet build infra/Demo1.Infra/Demo1.Infra.csproj
 
-# Frontend
+# Frontend (typecheck + Vite bundle + 17 Vitest cases)
 cd frontend
-npm test           # watch mode
-npm run test:ci    # single pass
+npm install
+npm run build                    # tsc -b && vite build
+npm test                         # vitest run
 ```
 
 ## Guidelines
 
-- Every public method on `IChatService`, `IEvaluationService`, and infra command classes must have at least one happy-path and one failure-path test.
-- Tests must not call real Azure services. Use the `Mock<KnowledgeBaseRetrievalClient>` / `Mock<ChatClient>` fakes provided in `tests/ChatbotApi.Tests/Fakes/`.
-- Integration with real Foundry resources is the responsibility of the `ensure-agent` smoke command, not the unit-test suite.
+- Tests must not call real Azure services. The SSE tests stream synthetic frames via `ReadableStream`; the pricing tests use the static rate table directly.
+- The frontend's `ChatPanel.test.tsx` is the contract test for the streaming event shape; if you change `frontend/src/api/streamChat.ts`, the fixture in the test must be updated to match the new event mapping.
+- The hosted-agent's smoke test is documented under *Verifying the deploy* in [operations.md](operations.md) — it doubles as the end-to-end test, since the agent is the only orchestration surface.
 
-## Adding a new evaluator
+## Adding a model
 
-1. Add the evaluator id to `EvaluationService.Evaluators` (sorted alphabetically).
-2. Add a fixture row to `tests/ChatbotApi.Tests/Fixtures/eval-runs.json` covering the new score path.
-3. Add a `EvalPanel` test asserting the new column renders for the same fixture.
-4. Update [docs/operations.md](operations.md) `Evaluation runs` section.
+1. Add the model deployment name to `MODEL_PRICES` in [frontend/src/pricing.ts](../frontend/src/pricing.ts) with current per-1M-token list prices. Update the verification-date comment.
+2. Add a case to [frontend/src/test/pricing.test.ts](../frontend/src/test/pricing.test.ts).
+3. Update the hosted-agent env var `AZURE_AI_MODEL_DEPLOYMENT_NAME` (locally via `hosted-agent/.env`, in production via `./deploy/deploy-aca.sh`).

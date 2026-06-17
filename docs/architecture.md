@@ -4,110 +4,135 @@
 
 | Component | Tech | Responsibility |
 | --- | --- | --- |
-| `frontend/` | Vite + React + TypeScript + Fluent UI | Chat UI, eval panel, tool-activity expander |
-| `backend/ChatbotApi` | .NET 10 minimal API | `/api/chat`, `/api/health`, `/api/eval/run`; OTel → App Insights |
-| `infra/Demo1.Infra` | .NET 10 console | Idempotent provisioning of Search + KB + hosted agent |
-| Foundry Hosted Agent | `Azure.AI.Agents.Persistent` | Portal-visible orchestrator (`kb-mslearn-hosted`); owns the system prompt and citation contract |
-| Azure AI Search | Provisioned by `ensure-search` | Hosts the Knowledge Base + Knowledge Source(s) |
-| MS Learn MCP server | Hosted by Microsoft (public) | Currently the single grounding source the KB owns |
-| Application Insights | Existing on the project | Receives OTel spans for the chat run |
+| `frontend/` (nginx + Vite SPA) | React 19 + TypeScript + Vite | Streaming chat UI: tool pills, citation list, per-turn token usage + cost |
+| `frontend/proxy/` (sidecar) | Node 24, `@azure/identity` | Adds the workload-identity bearer token (or none, for ACA-internal) and streams the SSE response through |
+| `hosted-agent/` | .NET 10 + `Microsoft.Agents.AI.Foundry.Hosting` + `Azure.AI.Projects` | The Foundry hosted agent. Exposes `/responses` (OpenAI Responses API, SSE). Owns the system prompt and the `knowledge_base_search` function tool |
+| `infra/Demo1.Infra` | .NET 10 console | Idempotent provisioning of Search + Knowledge Base + a smoke test |
+| Azure AI Search | Provisioned by `ensure-search` | Hosts the `kb-mslearn` Knowledge Base + Knowledge Source(s) |
+| MS Learn MCP server | Hosted by Microsoft | The Knowledge Base's current grounding source |
+| Application Insights | Optional | Receives OTel spans (agent-side) when `APPLICATIONINSIGHTS_CONNECTION_STRING` is set |
 
-## Request sequence (hosted-agent path, default)
+There is **no backend API**. The browser streams directly from the hosted agent through a thin token-attaching proxy in the same Container App.
+
+## Request sequence
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant U  as User
-    participant UI as React UI
-    participant API as ChatbotApi (AgentChatService)
-    participant AG  as Foundry Hosted Agent
+    participant U   as User
+    participant UI  as React SPA
+    participant NGX as nginx (frontend container)
+    participant PRX as token-proxy (sidecar)
+    participant AG  as Hosted Agent (Demo1.Agent)
     participant KB  as Knowledge Base (kb-mslearn)
     participant MCP as MS Learn MCP
 
-    U->>UI: types question
-    UI->>API: POST /api/chat { question }
-    API->>AG:  Threads.Create → Messages.Create(user) → Runs.Create
-    AG-->>API: run.status = RequiresAction<br/>tool_call: knowledge_base_search({query})
-    API->>KB:  KnowledgeBaseRetrievalClient.Retrieve(query)
-    KB->>MCP:  MCP tools/call microsoft_docs_search
+    U->>UI:  types question
+    UI->>NGX: POST /api/responses {input, stream:true}
+    NGX->>PRX: proxy_pass http://127.0.0.1:8090 (no buffering)
+    PRX->>AG: POST /responses + Authorization: Bearer (when scope set)
+    AG-->>PRX: SSE: response.created
+    AG->>AG: model picks tool: knowledge_base_search({query})
+    AG->>KB: KnowledgeBaseRetrievalClient.Retrieve(query)
+    KB->>MCP: tools/call microsoft_docs_search
     MCP-->>KB: passages + URLs + titles
-    KB-->>API: KnowledgeBaseRetrievalResponse (Response[0].Content[0].Text JSON)
-    API->>AG:  Runs.SubmitToolOutputs(run, [{ id, json }])
-    AG-->>API: run.status = Completed
-    API->>AG:  Messages.GetMessages(thread, run) → latest Agent text
-    API-->>UI: { answer, citations, source:"agent", elapsedMs, traceId }
-    UI-->>U: renders answer + citation expander
+    KB-->>AG: KnowledgeBaseRetrievalResponse
+    AG-->>PRX: SSE: response.function_call_arguments.delta/.done<br/>SSE: response.output_item.done (function_call_output)
+    AG-->>PRX: SSE: response.output_text.delta × N
+    AG-->>PRX: SSE: response.completed { usage: { input_tokens, output_tokens, total_tokens } }
+    PRX-->>NGX: streamed (passthrough)
+    NGX-->>UI: streamed (passthrough)
+    UI-->>U: deltas render live; tool pill turns ✓; usage + cost shown on completed
 ```
 
 ## Design rationale
 
-### Why a Foundry Hosted Agent, not in-process chat completions?
+### Why a Foundry hosted agent, not a backend API?
 
-The user wants the hosted agent to *own* the chat. That means: the system prompt, the citation contract, the “only answer from references” guardrail, model+temperature, and the audit trail (thread + run) all live in Foundry. Operators can inspect, version, and re-prompt the agent from the portal without redeploying the backend.
+Previously a .NET backend called `Azure.AI.Agents.Persistent` to run an Assistants-style agent. That agent appeared under *Foundry → classic agents*, not the new Agents view, because the OpenAI Assistants object model is a separate surface from Foundry's new hosted-agent runtime.
 
-What the **backend** owns is exactly one thing: executing the agent's `knowledge_base_search` tool by calling the Knowledge Base. The agent has no direct line to the KB SDK — it asks the backend, and the backend authenticates as its own SAMI.
+The current architecture moves the *entire* orchestration into the agent process itself:
 
-### Why a function tool and not the SDK's `KnowledgeBaseToolDefinition`?
+- `Microsoft.Agents.AI.Foundry.Hosting` (`AgentHost.CreateBuilder` + `AddFoundryResponses` + `MapFoundryResponses`) exposes the OpenAI Responses API (`/responses`) — the same protocol the new Foundry portal speaks.
+- `AIProjectClient.AsAIAgent(model, instructions, name, description, tools)` wires a single `AIFunctionFactory.Create(KnowledgeBaseSearchTool.SearchAsync, "knowledge_base_search")` function tool. The model decides when to call it; the runtime executes it in-process; the tool output is folded back into the same response stream.
+- The browser talks **streaming SSE** end-to-end, so tool calls, function-argument deltas, and text deltas all surface in the UI as they happen.
 
-`Azure.AI.Agents.Persistent` 1.2.0-beta.8 ships a partial `KnowledgeBaseToolDefinition` type but its server-side routing is not yet enabled for our project's region/SKU. We register a single `FunctionToolDefinition` named `knowledge_base_search` with a JSON Schema (`{ query: string }`) and execute it ourselves. The agent's instructions explicitly say: *“call `knowledge_base_search` with a focused query, then answer using ONLY those references, citing each fact with [n].”* This keeps the contract identical to what a native KB tool would expose, so swapping in the typed tool later is a one-class change.
+The hosted agent has no other responsibilities. There is no separate web tier to operate.
 
-### Knowledge base shape — and why the KB matters
+### Why a token-proxy sidecar?
 
-The KB is the long-lived integration layer. It currently holds **one** knowledge source (`ks-mslearn-mcp` → MS Learn MCP), but the same KB will host more sources later — internal SharePoint, blob containers, additional MCP servers — without any backend change. The agent always asks one tool (`knowledge_base_search`); the KB fans out to whichever sources are configured.
+Browsers cannot mint Microsoft Entra tokens, and shipping a SAMI's credentials to a SPA is unacceptable. The 120-LOC Node sidecar in `frontend/proxy/server.mjs`:
+
+1. Runs as a second container in the same ACA app as nginx (so they share `127.0.0.1` and a single managed identity).
+2. Acquires a token via `DefaultAzureCredential` for the configured `FOUNDRY_TOKEN_SCOPE` (cached until 5 minutes before expiry).
+3. Forwards each request to `${FOUNDRY_AGENT_ENDPOINT}/responses` with the `Authorization: Bearer …` header attached.
+4. Pipes the response body straight back, preserving `text/event-stream` semantics (sets `x-accel-buffering: no` and `cache-control: no-cache, no-transform`).
+5. Derives per-session isolation keys (`x-agent-user-isolation-key`, `x-agent-chat-isolation-key`) from `x-session-id` or the client's IP. These keys partition the agent's in-memory conversation store so concurrent sessions don't leak into one another.
+
+When deploying the agent to an ACA-internal endpoint (no Entra in front), set `FOUNDRY_TOKEN_SCOPE=` (empty) — the sidecar skips token acquisition and just forwards.
+
+### Knowledge base shape
 
 ```mermaid
 flowchart LR
-    AG[Hosted Agent] -- knowledge_base_search --> API[ChatbotApi]
-    API -- Retrieve --> KB[(Knowledge Base<br/>kb-mslearn)]
+    AG[Hosted Agent] -- knowledge_base_search --> KB[(Knowledge Base<br/>kb-mslearn)]
     KB --> S1[KS: MS Learn MCP]
     KB -. future .-> S2[KS: SharePoint]
     KB -. future .-> S3[KS: Blob index]
     KB -. future .-> S4[KS: more MCP servers]
 ```
 
-### KB endpoint pitfall (root cause of the 401)
+The KB is a long-lived integration layer. It currently holds one knowledge source (`ks-mslearn-mcp`), but the agent always asks one tool (`knowledge_base_search`); the KB fans out to whichever sources it owns. Adding a new source does not change the agent.
 
-The KB's `AzureOpenAIVectorizerParameters.ResourceUri` **must** be the OpenAI host:
+### KB endpoint pitfall (root cause of the historical 401)
 
-```
-https://<account>.openai.azure.com/
-```
-
-…not `https://<account>.cognitiveservices.azure.com/`. Our Foundry account has `disableLocalAuth=true`, and the cognitive-services host returns `401 Principal does not have access to API/Operation` for the KB's managed-identity bearer because that token's audience does not match. The infra command `ensure-kb` writes the correct host now; this is documented in [docs/operations.md](docs/operations.md) under *KB 401 (sticky)*.
+The KB's `AzureOpenAIVectorizerParameters.ResourceUri` **must** be the OpenAI host (`https://<account>.openai.azure.com/`), not `https://<account>.cognitiveservices.azure.com/`. With `disableLocalAuth=true` on the Foundry account, the cognitive-services host returns 401 because the bearer audience does not match. `EnsureKnowledgeBaseCommand` writes the correct host.
 
 ### Citation extraction shape
 
-`KnowledgeBaseRetrievalResponse.References` is a metadata list (just `ref_id` + tool name). The actual passages live in `Response[0].Content[0].Text` as a JSON array `[{ toolName, ref_id, title, content }, …]`, where each entry's `content` is itself a JSON string `{ title, content, contentUrl }`. The shared [backend/ChatbotApi/KbCitationParser.cs](backend/ChatbotApi/KbCitationParser.cs) parses both layers and produces `Citation { Title, Url, Snippet }` records.
+`KnowledgeBaseRetrievalResponse.Response[0].Content[0].Text` is a JSON array `[{ ref_id, title, content, contentUrl }, …]`, where each `content` is itself a JSON string. [hosted-agent/Tools/KbCitationParser.cs](hosted-agent/Tools/KbCitationParser.cs) walks both layers and produces `KbCitation { Title, Url, Snippet }` records. The agent's `KnowledgeBaseSearchTool.SearchAsync` returns this as a stable JSON shape `[{index, title, url, snippet}]` so the model and the frontend agree.
 
-### Legacy in-process path (still available)
+### Streaming event contract
 
-Setting `Demo1__UseHostedAgent=false` falls back to `ChatService` (KB-then-LLM in-process). It is kept for two reasons: (1) the eval panel exercises the same `IChatService` interface and was originally written against the in-process implementation; (2) it is a useful baseline when diagnosing agent-side issues. The in-process path is **not** the production flow.
+The frontend SSE consumer ([frontend/src/api/streamChat.ts](frontend/src/api/streamChat.ts)) translates Foundry Responses events into a typed `StreamEvent` discriminated union:
+
+| Source event | UI effect |
+| --- | --- |
+| `response.created` | reserved (response id) |
+| `response.output_item.added` (`function_call`) | shows tool pill with name |
+| `response.function_call_arguments.delta` | appends to the tool pill's arg preview |
+| `response.output_item.done` (`function_call_output`) | marks pill ✓, parses tool output as citations |
+| `response.output_text.delta` | appends to the answer text |
+| `response.completed` | renders the usage footer (`input_tokens`, `output_tokens`, model, latency, cost) |
+
+`UsageFooter` calls `estimateCost(model, usage)` against the table in [frontend/src/pricing.ts](frontend/src/pricing.ts). Rates are USD list prices per 1M tokens; the comment in that file pins the verification date and source URL.
 
 ### Telemetry
 
-`AppContext.SetSwitch("Azure.Experimental.EnableGenAITracing", true)` + `Azure.Experimental.TraceGenAIMessageContent=true` are set before host build. `AddOpenTelemetry().UseAzureMonitor(...)` wires the Azure SDK sources. `AgentChatService` adds its own `Activity` spans: `agent.answer` (root), `agent.tool.kb_retrieve` (per tool call). The trace contains the thread id, run id, and KB citation count; the response body returns the `traceId` so it can be pasted into the App Insights query.
+`hosted-agent/Program.cs` calls `AddAzureMonitor()` only when `APPLICATIONINSIGHTS_CONNECTION_STRING` is set. The Foundry Responses runtime emits its own GenAI spans (model, prompt/completion tokens, tool calls) under `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true`, which the deploy script enables in production.
 
 ### Deploying to Azure Container Apps
 
-`deploy/deploy-aca.sh` is a one-command deploy that stands the same two processes up in Azure Container Apps:
-
 ```mermaid
 flowchart LR
-    Dev[deploy-aca.sh] -->|az acr build| ACR[(ACR<br/>caa…acr)]
-    ACR --> WEB[chatbot-web<br/>nginx + Vite bundle]
-    ACR --> API[chatbot-api<br/>.NET 10 minimal API]
-    WEB -- /api/* (TLS+SNI) --> API
-    API -- SAMI --> AG[Hosted Agent]
-    API -- SAMI --> KB[KB + Search]
+    Dev[deploy-aca.sh] -->|az acr build| ACR[(ACR)]
+    ACR --> AG[hosted-agent app<br/>internal ingress :8088]
+    ACR --> WEB[chatbot-web app]
+    subgraph WEB
+      NGX[nginx :8080]
+      PRX[token-proxy :8090]
+    end
+    NGX -- 127.0.0.1:8090 --> PRX
+    PRX --> AG
+    AG --> KB[KB + Search]
     AG --> LLM[gpt-4.1-mini]
     KB --> MCP[MS Learn MCP]
 ```
 
 Key decisions:
 
-- **Standard env, not Express.** ACA Express preview lists *Managed identity (app runtime)* as *In development*; the backend needs a system-assigned MI to call Foundry and Search, so we deploy into a standard managed environment. The script supports `ENV_MODE=express` for the future but defaults to `standard`.
-- **`az acr build` + `az containerapp create/update` instead of `az containerapp up`.** The `containerapp` CLI extension currently raises `'NoneType' object has no attribute 'linux'` on `up --source` (regression in 1.3.0b4); the explicit build+create path sidesteps it.
-- **Two apps, one ingress each.** The frontend has external ingress; it proxies `/api/*` to the backend's external ingress over HTTPS. We considered internal ingress for the backend but kept it external so the demo can `curl` either endpoint.
-- **nginx → HTTPS upstream needs SNI.** ACA's ingress (fronted by Azure Front Door) **requires SNI** on the TLS handshake. nginx, by default, sends the upstream IP as the SNI and Host, which gets the handshake reset. `frontend/nginx.conf.template` sets `proxy_ssl_server_name on`, `proxy_ssl_name $backend_host`, and `Host $backend_host`, where `$backend_host` is supplied as the `BACKEND_HOST` env var. Both are substituted at container start by nginx's stock envsubst entrypoint.
-- **RBAC for the agent path.** Beyond `Cognitive Services OpenAI User` on the Foundry account, the backend SAMI gets `Azure AI Developer` on the project (to create threads/runs) and `Search Index Data Reader` + `Search Service Contributor` on the Search service (to call `Retrieve` on the KB). The deploy script assigns all of them.
-
+- **Standard env, not Express.** ACA Express preview lists *Managed identity (app runtime)* as *In development*; both the agent and the proxy use system-assigned managed identity.
+- **Hosted agent on internal ingress.** The agent is only reachable from inside the ACA environment, by the sidecar. The browser never sees it.
+- **Multi-container `chatbot-web`.** nginx + the sidecar share the network namespace, so the proxy is `http://127.0.0.1:8090` to nginx — no service discovery needed.
+- **`az acr build` + YAML `containerapp update`.** The multi-container spec is rendered as YAML and applied with `az containerapp update --yaml`; this is the path that supports more than one container per app today.
+- **RBAC.** The hosted-agent SAMI gets `Cognitive Services OpenAI User` + `Cognitive Services User` on the Foundry account and project, and `Search Index Data Reader` + `Search Service Contributor` on the Search service. The frontend SAMI gets nothing — it never authenticates to Azure directly; the sidecar talks to the agent's ACA-internal endpoint.

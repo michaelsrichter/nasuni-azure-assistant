@@ -7,9 +7,11 @@ if (args.Length == 0)
     Console.WriteLine("Commands:");
     Console.WriteLine("  ensure-search      Provision/detect Azure AI Search and connect to the Foundry project");
     Console.WriteLine("  ensure-kb          Create the knowledge source and knowledge base");
-    Console.WriteLine("  ensure-agent       Smoke-test the KB end-to-end (KB -> MCP -> grounded answer)");
-    Console.WriteLine("  ensure-hosted-agent  Create/update the Foundry hosted agent (MCP-grounded, visible in portal)");
-    Console.WriteLine("  ensure-all         Run ensure-search, ensure-kb, ensure-agent, ensure-hosted-agent in sequence");
+    Console.WriteLine("  ensure-agent       Smoke-test the KB end-to-end (KB -> grounded answer)");
+    Console.WriteLine("  ensure-all         Run ensure-search, ensure-kb, ensure-agent in sequence");
+    Console.WriteLine();
+    Console.WriteLine("Note: the Foundry hosted agent itself lives in ../hosted-agent and is");
+    Console.WriteLine("deployed via ./deploy/deploy-aca.sh (no longer provisioned from here).");
     return 1;
 }
 
@@ -31,7 +33,6 @@ try
         "ensure-search" => await EnsureSearchCommand.RunAsync(cfg, state, statePath),
         "ensure-kb" => await EnsureKnowledgeBaseCommand.RunAsync(cfg, state, statePath),
         "ensure-agent" => await EnsureAgentCommand.RunAsync(cfg, state, statePath),
-        "ensure-hosted-agent" => await EnsureHostedAgentCommand.RunAsync(cfg, state, statePath),
         "ensure-all" => await EnsureAll(cfg, state, statePath),
         _ => Fail($"Unknown command: {args[0]}"),
     };
@@ -55,7 +56,5 @@ static async Task<int> EnsureAll(InfraConfig cfg, InfraState state, string state
     if (rc != 0) return rc;
     rc = await EnsureKnowledgeBaseCommand.RunAsync(cfg, state, statePath);
     if (rc != 0) return rc;
-    rc = await EnsureAgentCommand.RunAsync(cfg, state, statePath);
-    if (rc != 0) return rc;
-    return await EnsureHostedAgentCommand.RunAsync(cfg, state, statePath);
+    return await EnsureAgentCommand.RunAsync(cfg, state, statePath);
 }
