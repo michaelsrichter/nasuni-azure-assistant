@@ -2,44 +2,6 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "backend: run",
-      "type": "shell",
-      "command": "dotnet",
-      "args": ["run", "--project", "backend/ChatbotApi/ChatbotApi.csproj"],
-      "options": {
-        "cwd": "${workspaceFolder}",
-        "env": {
-          "ASPNETCORE_ENVIRONMENT": "Development",
-          "DOTNET_ENVIRONMENT": "Development"
-        }
-      },
-      "isBackground": true,
-      "icon": {
-        "id": "server-process",
-        "color": "terminal.ansiBlue"
-      },
-      "presentation": {
-        "reveal": "always",
-        "panel": "dedicated",
-        "group": "demo",
-        "showReuseMessage": false,
-        "clear": true,
-        "echo": true,
-        "focus": false
-      },
-      "problemMatcher": {
-        "owner": "dotnet-watch",
-        "pattern": {
-          "regexp": "^.*$"
-        },
-        "background": {
-          "activeOnStart": true,
-          "beginsPattern": "^.*(?:Building|Restoring|Starting).*$",
-          "endsPattern": "^.*(?:Application started|Now listening on|application has started|Press Ctrl\\+C).*$"
-        }
-      }
-    },
-    {
       "label": "frontend: dev",
       "type": "shell",
       "command": "npm",
@@ -74,8 +36,8 @@
       }
     },
     {
-      "label": "demo: start (backend + frontend)",
-      "dependsOn": ["backend: run", "frontend: dev"],
+      "label": "demo: start (frontend)",
+      "dependsOn": ["frontend: dev"],
       "dependsOrder": "parallel",
       "icon": {
         "id": "rocket",

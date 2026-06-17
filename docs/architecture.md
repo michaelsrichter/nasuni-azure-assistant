@@ -20,33 +20,33 @@ There is **no backend API**, and the agent does **not** run in our Container App
 ```mermaid
 sequenceDiagram
     autonumber
-    participant U   as User
-    participant UI  as React SPA
+    participant U as User
+    participant UI as React SPA
     participant NGX as nginx (frontend container)
     participant PRX as token-proxy (sidecar)
-    participant AG  as Foundry Hosted Agent Service<br/>(demo1-kb-mslearn)
-    participant KB  as Knowledge Base (kb-mslearn)
+    participant AG as Foundry Hosted Agent Service
+    participant KB as Knowledge Base (kb-mslearn)
     participant MCP as MS Learn MCP
 
-    U->>UI:  types question
-    UI->>NGX: POST /api/responses {input, stream:true}
-    NGX->>PRX: proxy_pass http://127.0.0.1:8090 (no buffering)
-    PRX->>PRX: DefaultAzureCredential.getToken(https://ai.azure.com/.default)
-    PRX->>AG: POST .../agents/demo1-kb-mslearn/endpoint/protocols/openai/responses<br/>Authorization: Bearer …
-    AG-->>PRX: SSE: response.created
-    AG->>AG: model picks tool: knowledge_base_search({query})
-    AG-->>PRX: SSE: response.output_item.added (function_call)
-    AG-->>PRX: SSE: response.function_call_arguments.delta × N / .done
+    U->>UI: types question
+    UI->>NGX: POST /api/responses (input, stream true)
+    NGX->>PRX: proxy_pass to 127.0.0.1:8090 (no buffering)
+    PRX->>PRX: DefaultAzureCredential.getToken
+    PRX->>AG: POST openai/responses with Bearer token
+    AG-->>PRX: SSE response.created
+    AG->>AG: model picks tool knowledge_base_search(query)
+    AG-->>PRX: SSE response.output_item.added (function_call)
+    AG-->>PRX: SSE function_call_arguments.delta then done
     AG->>KB: KnowledgeBaseRetrievalClient.Retrieve(query)
     KB->>MCP: tools/call microsoft_docs_search
-    MCP-->>KB: passages + URLs + titles
+    MCP-->>KB: passages plus URLs and titles
     KB-->>AG: KnowledgeBaseRetrievalResponse
-    AG-->>PRX: SSE: response.output_item.done (function_call_output)
-    AG-->>PRX: SSE: response.output_text.delta × N
-    AG-->>PRX: SSE: response.completed { usage: { input_tokens, output_tokens, total_tokens } }
+    AG-->>PRX: SSE response.output_item.done (function_call_output)
+    AG-->>PRX: SSE response.output_text.delta (multiple)
+    AG-->>PRX: SSE response.completed with usage tokens
     PRX-->>NGX: streamed (passthrough)
     NGX-->>UI: streamed (passthrough)
-    UI-->>U: deltas render live; tool pill turns ✓; usage + cost shown on completed
+    UI-->>U: deltas render live, tool pill marked done, usage and cost shown
 ```
 
 ## Design rationale
@@ -160,11 +160,11 @@ azd assigns the baseline RBAC automatically (Container Registry Repository Reade
 ```mermaid
 flowchart LR
     Dev[deploy-aca.sh] -->|az acr build| ACR[(ACR)]
-    ACR --> WEB[chatbot-web app]
-    subgraph WEB
+    subgraph WEB["chatbot-web app"]
       NGX[nginx :8080]
       PRX[token-proxy :8090]
     end
+    ACR --> NGX
     NGX -- 127.0.0.1:8090 --> PRX
     PRX -- Bearer --> FA[Foundry hosted agent]
 ```

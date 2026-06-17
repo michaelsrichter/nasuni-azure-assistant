@@ -2,9 +2,10 @@
 name: demo1-kb-mslearn
 displayName: "Demo1 KB MSLearn Agent"
 description: >
-  Microsoft developer-platform assistant. Grounds every answer via the
-  kb-mslearn Azure AI Search Knowledge Base (which itself fans out to the
-  Microsoft Learn MCP server) and cites references with [n].
+  Nasuni-on-Azure assistant. Helps users deploy and operate Nasuni on Microsoft
+  Azure and answers general Azure/Microsoft questions. Grounds every answer via
+  the kb-mslearn Azure AI Search Knowledge Base (Nasuni installation docs plus
+  the Microsoft Learn MCP server) and cites references with [n].
 
 metadata:
   tags:

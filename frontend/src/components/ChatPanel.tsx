@@ -1,42 +1,47 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { streamChat, type Citation, type StreamEvent } from '../api/streamChat';
-import type { TokenUsage } from '../pricing';
+import type { ChatTurn } from '../lib/types';
+import { trackEvent, trackException } from '../lib/telemetry';
 import { ToolPill } from './ToolPill';
 import { UsageFooter } from './UsageFooter';
+import { CannedQuestions } from './CannedQuestions';
 
-interface ToolCall {
-  callId: string;
-  name: string;
-  args: string;
-  done: boolean;
+interface ChatPanelProps {
+  initialTurns?: ChatTurn[];
+  readOnly?: boolean;
+  onPersist?: (turns: ChatTurn[]) => void;
 }
 
-interface Turn {
-  id: number;
-  question: string;
-  text: string;
-  toolCalls: ToolCall[];
-  citations: Citation[];
-  model: string;
-  usage: TokenUsage | null;
-  elapsedMs: number;
-  error?: string;
-  done: boolean;
-}
-
-let nextId = 1;
-
-export function ChatPanel() {
-  const [turns, setTurns] = useState<Turn[]>([]);
+export function ChatPanel({ initialTurns = [], readOnly = false, onPersist }: ChatPanelProps) {
+  const [turns, setTurns] = useState<ChatTurn[]>(initialTurns);
   const [question, setQuestion] = useState('');
   const [busy, setBusy] = useState(false);
+  const [cannedDismissed, setCannedDismissed] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const logEndRef = useRef<HTMLDivElement | null>(null);
+
+  // Per-instance id counter that won't collide with ids from a loaded session.
+  const nextIdRef = useRef(
+    initialTurns.reduce((max, t) => Math.max(max, t.id), 0) + 1,
+  );
+
+  // Auto-persist a session once all of its turns have settled.
+  useEffect(() => {
+    if (readOnly || turns.length === 0) return;
+    if (turns.some((t) => !t.done)) return;
+    onPersist?.(turns);
+  }, [turns, readOnly, onPersist]);
+
+  // Keep the latest content in view as the answer streams in.
+  useEffect(() => {
+    logEndRef.current?.scrollIntoView?.({ block: 'end' });
+  }, [turns]);
 
   const send = useCallback(async () => {
     const q = question.trim();
-    if (!q || busy) return;
+    if (!q || busy || readOnly) return;
 
-    const id = nextId++;
+    const id = nextIdRef.current++;
     setTurns((t) => [
       ...t,
       {
@@ -53,6 +58,7 @@ export function ChatPanel() {
     ]);
     setQuestion('');
     setBusy(true);
+    trackEvent('question_sent', { length: q.length });
 
     const t0 = performance.now();
     try {
@@ -63,6 +69,7 @@ export function ChatPanel() {
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      trackException(err);
       setTurns((all) =>
         all.map((turn) => (turn.id === id ? { ...turn, error: msg, done: true } : turn)),
       );
@@ -71,7 +78,7 @@ export function ChatPanel() {
       setBusy(false);
       inputRef.current?.focus();
     }
-  }, [question, busy]);
+  }, [question, busy, readOnly]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -80,21 +87,32 @@ export function ChatPanel() {
     }
   };
 
+  const pickCanned = useCallback((prompt: string) => {
+    setQuestion(prompt);
+    setCannedDismissed(true);
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      if (el) {
+        el.focus();
+        el.setSelectionRange(el.value.length, el.value.length);
+      }
+    });
+  }, []);
+
+  const showCanned = !readOnly && turns.length === 0 && !busy && !cannedDismissed;
+
   return (
     <div className="chat-panel">
-      <header className="chat-header">
-        <h1>Microsoft Docs Chatbot</h1>
-        <p className="subtitle">
-          Streamed from a Foundry hosted agent grounded in Microsoft Learn via the
-          kb-mslearn Knowledge Base.
-        </p>
-      </header>
+      {readOnly && (
+        <div className="readonly-banner" role="status">
+          Viewing a saved conversation. Start a new chat to ask a question.
+        </div>
+      )}
 
       <ol className="chat-log" aria-live="polite">
-        {turns.length === 0 && (
-          <li className="hint">
-            Ask a question about Microsoft APIs &mdash; for example,{' '}
-            <em>&ldquo;How do I list blobs with Azure.Storage.Blobs in C#?&rdquo;</em>
+        {showCanned && (
+          <li className="canned-host">
+            <CannedQuestions onSelect={pickCanned} />
           </li>
         )}
         {turns.map((turn) => (
@@ -126,34 +144,37 @@ export function ChatPanel() {
             </div>
           </li>
         ))}
+        <div ref={logEndRef} />
       </ol>
 
-      <form
-        className="chat-input"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void send();
-        }}
-      >
-        <textarea
-          ref={inputRef}
-          aria-label="Ask a question"
-          placeholder="Ask about a Microsoft API…"
-          value={question}
-          onChange={(e) => setQuestion(e.target.value)}
-          onKeyDown={onKeyDown}
-          rows={2}
-          disabled={busy}
-        />
-        <button type="submit" disabled={busy || question.trim().length === 0}>
-          {busy ? 'Streaming…' : 'Send'}
-        </button>
-      </form>
+      {!readOnly && (
+        <form
+          className="chat-input"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void send();
+          }}
+        >
+          <textarea
+            ref={inputRef}
+            aria-label="Ask a question"
+            placeholder="Ask about deploying Nasuni on Azure…"
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            onKeyDown={onKeyDown}
+            rows={2}
+            disabled={busy}
+          />
+          <button type="submit" disabled={busy || question.trim().length === 0}>
+            {busy ? 'Streaming…' : 'Send'}
+          </button>
+        </form>
+      )}
     </div>
   );
 }
 
-function applyEvent(turn: Turn, ev: StreamEvent, t0: number): Turn {
+function applyEvent(turn: ChatTurn, ev: StreamEvent, t0: number): ChatTurn {
   switch (ev.kind) {
     case 'toolCallStarted':
       return {

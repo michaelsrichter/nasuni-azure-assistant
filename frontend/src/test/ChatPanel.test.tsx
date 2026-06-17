@@ -27,10 +27,12 @@ describe('ChatPanel (streaming)', () => {
     vi.restoreAllMocks();
   });
 
-  it('renders the header and an empty-state hint', () => {
+  it('renders the canned starter questions in the empty state', () => {
     render(<ChatPanel />);
-    expect(screen.getByRole('heading', { name: /microsoft docs chatbot/i })).toBeInTheDocument();
-    expect(screen.getByText(/Ask a question about Microsoft APIs/i)).toBeInTheDocument();
+    expect(screen.getByText(/pick a starter question/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /Edge Appliance VM SKUs/i }),
+    ).toBeInTheDocument();
   });
 
   it('streams a tool call, text deltas, citations, and a usage footer', async () => {
@@ -85,7 +87,7 @@ describe('ChatPanel (streaming)', () => {
     fireEvent.change(screen.getByLabelText(/ask a question/i), {
       target: { value: 'How do I list blobs?' },
     });
-    fireEvent.click(screen.getByRole('button', { name: /send/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^send$/i }));
 
     await waitFor(() => {
       expect(screen.getByText(/Use BlobContainerClient\.GetBlobs/)).toBeInTheDocument();
@@ -123,7 +125,7 @@ describe('ChatPanel (streaming)', () => {
 
     render(<ChatPanel />);
     fireEvent.change(screen.getByLabelText(/ask a question/i), { target: { value: 'hi' } });
-    fireEvent.click(screen.getByRole('button', { name: /send/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^send$/i }));
 
     await waitFor(() => {
       expect(screen.getByText(/Chat request failed \(500\)/)).toBeInTheDocument();

@@ -31,6 +31,16 @@ server {
         proxy_read_timeout    600s;
     }
 
+    # Runtime configuration for the SPA. Telemetry identifiers are injected from
+    # container environment variables at start time (envsubst renders this
+    # template), so no secrets are baked into the static bundle. Unset variables
+    # render as empty strings and the corresponding instrumentation no-ops.
+    location = /config.js {
+        default_type application/javascript;
+        add_header Cache-Control "no-store";
+        return 200 'window.__APP_CONFIG__ = { "appInsightsConnectionString": "${APPLICATIONINSIGHTS_CONNECTION_STRING}", "clarityProjectId": "${CLARITY_PROJECT_ID}" };';
+    }
+
     # Cache hashed assets aggressively.
     location ~* \.(?:js|css|svg|woff2?|ttf|otf|eot|ico|png|jpg|jpeg|gif|webp)$ {
         expires 7d;
