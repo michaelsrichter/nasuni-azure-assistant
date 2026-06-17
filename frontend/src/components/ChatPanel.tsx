@@ -258,7 +258,7 @@ function CitationsList({ citations }: { citations: Citation[] }) {
   ].filter(Boolean);
 
   return (
-    <details className="citations" open>
+    <details className="citations">
       <summary>
         {citations.length} citation{citations.length === 1 ? '' : 's'}
         {breakdown.length > 0 && (
