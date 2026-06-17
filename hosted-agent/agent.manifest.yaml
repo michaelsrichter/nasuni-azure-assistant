@@ -1,0 +1,47 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/AgentSchema/refs/heads/main/schemas/v1.0/AgentManifest.yaml
+name: demo1-kb-mslearn
+displayName: "Demo1 KB MSLearn Agent"
+description: >
+  Microsoft developer-platform assistant. Grounds every answer via the
+  kb-mslearn Azure AI Search Knowledge Base (which itself fans out to the
+  Microsoft Learn MCP server) and cites references with [n].
+
+metadata:
+  tags:
+    - AI Agent Hosting
+    - Azure AI AgentServer
+    - Responses Protocol
+    - Agent Framework
+    - Knowledge Base
+    - MS Learn
+
+template:
+  name: demo1-kb-mslearn
+  kind: hosted
+  protocols:
+    - protocol: responses
+      version: 1.0.0
+  resources:
+    cpu: "0.5"
+    memory: 1.0Gi
+  environment_variables:
+    - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+      value: "{{AZURE_AI_MODEL_DEPLOYMENT_NAME}}"
+    - name: DEMO1_SEARCH_ENDPOINT
+      value: "{{DEMO1_SEARCH_ENDPOINT}}"
+    - name: DEMO1_KNOWLEDGE_BASE_NAME
+      value: "{{DEMO1_KNOWLEDGE_BASE_NAME}}"
+
+parameters:
+  properties:
+    DEMO1_SEARCH_ENDPOINT:
+      type: string
+      description: "Azure AI Search endpoint (https://<svc>.search.windows.net)."
+    DEMO1_KNOWLEDGE_BASE_NAME:
+      type: string
+      description: "Name of the Knowledge Base (e.g. kb-mslearn)."
+
+resources:
+  - kind: model
+    id: gpt-4.1-mini
+    name:

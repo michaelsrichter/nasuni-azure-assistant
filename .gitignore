@@ -26,3 +26,7 @@ infra/state.json
 # OS
 .DS_Store
 Thumbs.db
+hosted-agent/bin/
+hosted-agent/obj/
+hosted-agent/.env
+hosted-agent/.azure/
