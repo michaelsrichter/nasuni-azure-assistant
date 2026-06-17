@@ -1,0 +1,28 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+project.lock.json
+artifacts/
+
+# Node / Vite
+node_modules/
+dist/
+.vite/
+*.log
+
+# Local config / secrets
+.env
+.env.local
+appsettings.Development.json
+appsettings.Local.json
+infra/state.json
+
+# azd
+.azure/
+
+# OS
+.DS_Store
+Thumbs.db
