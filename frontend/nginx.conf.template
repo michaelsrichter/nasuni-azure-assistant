@@ -1,0 +1,39 @@
+server {
+    listen       8080;
+    server_name  _;
+
+    root   /usr/share/nginx/html;
+    index  index.html;
+
+    # Proxy /api/* to the backend container app.
+    # BACKEND_URL is substituted by nginx's envsubst entrypoint at start time
+    # (e.g. https://chatbot-api.<env-default-domain>).
+    location /api/ {
+        proxy_pass         ${BACKEND_URL}/api/;
+        proxy_http_version 1.1;
+        proxy_set_header   Host              $proxy_host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_read_timeout 120s;
+    }
+
+    # Cache hashed assets aggressively.
+    location ~* \.(?:js|css|svg|woff2?|ttf|otf|eot|ico|png|jpg|jpeg|gif|webp)$ {
+        expires 7d;
+        add_header Cache-Control "public, max-age=604800, immutable";
+        try_files $uri =404;
+    }
+
+    # SPA fallback: route every non-file request to index.html.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Health check used by Container Apps probes.
+    location = /healthz {
+        access_log off;
+        add_header Content-Type text/plain;
+        return 200 "ok\n";
+    }
+}
