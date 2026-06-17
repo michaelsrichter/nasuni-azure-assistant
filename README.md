@@ -52,6 +52,9 @@ dotnet run --project infra/Demo1.Infra -- ensure-kb
 # 3. smoke-test the KB retrieval path end-to-end
 dotnet run --project infra/Demo1.Infra -- ensure-agent
 
+# 3b. (optional) create a portal-visible Foundry hosted agent (MCP-tool)
+dotnet run --project infra/Demo1.Infra -- ensure-hosted-agent
+
 # 4. start backend (terminal A)
 dotnet run --project backend/ChatbotApi
 
@@ -60,7 +63,17 @@ cd frontend && npm install && npm run dev
 # open http://localhost:5173
 ```
 
-`ensure-all` runs steps 1-3 in sequence.
+`ensure-all` runs steps 1, 2, 3, and 3b in sequence.
+
+## Deploying to Azure Container Apps
+
+One command builds both Docker images via ACR Tasks and deploys two container apps (backend + nginx-fronted SPA):
+
+```bash
+./deploy/deploy-aca.sh
+```
+
+Defaults: resource group `rg-demo1-aca`, region `westcentralus`, standard managed environment (Express preview does not yet support runtime managed identity). See [docs/operations.md](docs/operations.md#deploying-to-azure-container-apps) for the full breakdown, including the nginx SNI fix the frontend needs to talk to ACA's HTTPS ingress.
 
 ## Configuration
 

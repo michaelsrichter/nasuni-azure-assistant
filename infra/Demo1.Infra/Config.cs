@@ -40,6 +40,7 @@ public sealed class InfraState
     public string? SearchConnectionName { get; set; }
     public string? KnowledgeSourceId { get; set; }
     public string? KnowledgeBaseId { get; set; }
+    public string? HostedAgentId { get; set; }
     public string? AppInsightsConnectionString { get; set; }
     public DateTimeOffset? LastUpdated { get; set; }
 

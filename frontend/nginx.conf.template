@@ -9,13 +9,25 @@ server {
     # BACKEND_URL is substituted by nginx's envsubst entrypoint at start time
     # (e.g. https://chatbot-api.<env-default-domain>).
     location /api/ {
+        # Azure Container Apps ingress (Front Door) requires SNI on the TLS
+        # handshake and rejects the default $proxy_host (which becomes the
+        # upstream IP). We extract the bare hostname into a variable and use
+        # it for both Host and SNI.
+        set $backend_host "${BACKEND_HOST}";
+
         proxy_pass         ${BACKEND_URL}/api/;
         proxy_http_version 1.1;
-        proxy_set_header   Host              $proxy_host;
+        proxy_set_header   Host              $backend_host;
         proxy_set_header   X-Real-IP         $remote_addr;
         proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
         proxy_set_header   X-Forwarded-Proto $scheme;
-        proxy_read_timeout 120s;
+
+        proxy_ssl_server_name on;
+        proxy_ssl_name        $backend_host;
+
+        proxy_connect_timeout 30s;
+        proxy_send_timeout    120s;
+        proxy_read_timeout    120s;
     }
 
     # Cache hashed assets aggressively.

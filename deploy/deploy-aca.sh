@@ -1,17 +1,30 @@
 #!/usr/bin/env bash
-# Deploy the demo1 chatbot to Azure Container Apps **Express** (preview).
+# Deploy the demo1 chatbot to Azure Container Apps.
 #
-# Express environments are managed by Azure and require no VNet or Log Analytics
-# workspace, so they spin up in well under a minute. Two apps are deployed:
+# Two apps are deployed into a single Container Apps environment:
 #
 #   * chatbot-api       — the .NET 10 backend (built from ./backend/Dockerfile)
 #   * chatbot-web       — the nginx-served React frontend that proxies /api/* to
 #                         the backend (built from ./frontend/Dockerfile)
 #
-# Both images are built in the cloud using Azure Container Registry Tasks via
-# `az containerapp up --source`, so Docker is not required locally.
+# Both images are built in the cloud using Azure Container Registry Tasks
+# (`az acr build`), so Docker is not required locally.
 #
 # Reference: https://learn.microsoft.com/azure/container-apps/deploy-express-cli
+#
+# About 'express' vs 'standard' environments:
+#   The original target was the **express** environment (preview), but as of the
+#   current preview, *managed identity* and *secrets* are both listed as "In
+#   development" (see https://learn.microsoft.com/azure/container-apps/express-overview).
+#   Our backend authenticates to Azure AI Foundry via system-assigned managed
+#   identity (Foundry has disableLocalAuth=true), so we need a **standard**
+#   environment for it to work. The environment type is controlled by the
+#   ENV_MODE variable below; set ENV_MODE=express to opt back into the express
+#   preview when those features ship.
+#
+# Note: This script uses `az acr build` + `az containerapp create/update`
+# rather than `az containerapp up --source` because the latter currently has
+# a regression in containerapp extension 1.3.0b4 (`OS.linux` AttributeError).
 #
 # Usage:
 #   ./deploy/deploy-aca.sh                       # defaults
@@ -29,12 +42,19 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 # ---- Configuration ----------------------------------------------------------
-# Express is preview-only in westcentralus or eastasia.
+# Container Apps environment mode. 'standard' supports managed identity (which
+# our backend requires); 'express' is faster to provision but its preview
+# currently does not support MI or secrets.
+ENV_MODE="${ENV_MODE:-standard}"
+# Express is preview-only in westcentralus or eastasia; standard is GA in many
+# regions but we keep the same default for parity.
 LOCATION="${LOCATION:-westcentralus}"
 RESOURCE_GROUP="${RESOURCE_GROUP:-rg-demo1-aca}"
-ENV_NAME="${ENV_NAME:-cae-demo1}"
+ENV_NAME="${ENV_NAME:-cae-demo1-${ENV_MODE}}"
+ACR_NAME="${ACR_NAME:-}"   # auto-detected or auto-created
 BACKEND_APP="${BACKEND_APP:-chatbot-api}"
 FRONTEND_APP="${FRONTEND_APP:-chatbot-web}"
+IMAGE_TAG="${IMAGE_TAG:-$(date +%Y%m%d-%H%M%S)}"
 
 # Resources from the infra CLI (override if you re-provisioned).
 DEMO1__SEARCHENDPOINT="${DEMO1__SEARCHENDPOINT:-https://srch-demo1-d9129d.search.windows.net}"
@@ -75,18 +95,28 @@ az extension update -n containerapp >/dev/null 2>&1 || true
 say "Creating resource group '$RESOURCE_GROUP' in $LOCATION (idempotent)"
 az group create --name "$RESOURCE_GROUP" --location "$LOCATION" -o none
 
-# ---- 2. Express environment -------------------------------------------------
+# ---- 2. Container Apps environment ------------------------------------------
 if az containerapp env show -n "$ENV_NAME" -g "$RESOURCE_GROUP" >/dev/null 2>&1; then
   say "Container Apps environment '$ENV_NAME' already exists"
 else
-  say "Creating express Container Apps environment '$ENV_NAME'"
-  az containerapp env create \
-    --environment-mode express \
-    --name "$ENV_NAME" \
-    --resource-group "$RESOURCE_GROUP" \
-    --location "$LOCATION" \
-    --logs-destination none \
-    -o none
+  if [[ "$ENV_MODE" == "express" ]]; then
+    say "Creating EXPRESS Container Apps environment '$ENV_NAME' (preview)"
+    az containerapp env create \
+      --environment-mode express \
+      --name "$ENV_NAME" \
+      --resource-group "$RESOURCE_GROUP" \
+      --location "$LOCATION" \
+      --logs-destination none \
+      -o none
+  else
+    say "Creating STANDARD Container Apps environment '$ENV_NAME'"
+    az containerapp env create \
+      --name "$ENV_NAME" \
+      --resource-group "$RESOURCE_GROUP" \
+      --location "$LOCATION" \
+      --logs-destination none \
+      -o none
+  fi
 fi
 
 ENV_DEFAULT_DOMAIN="$(az containerapp env show \
@@ -94,23 +124,72 @@ ENV_DEFAULT_DOMAIN="$(az containerapp env show \
   --query properties.defaultDomain -o tsv)"
 say "Environment default domain: $ENV_DEFAULT_DOMAIN"
 
-# ---- 3. Backend app ---------------------------------------------------------
-say "Building and deploying backend '$BACKEND_APP' from ./backend (ACR Tasks build)"
-az containerapp up \
-  --name "$BACKEND_APP" \
-  --resource-group "$RESOURCE_GROUP" \
-  --environment "$ENV_NAME" \
-  --location "$LOCATION" \
-  --source ./backend \
-  --target-port 8080 \
-  --ingress external \
+# ---- 3. Azure Container Registry --------------------------------------------
+if [[ -z "$ACR_NAME" ]]; then
+  ACR_NAME="$(az acr list -g "$RESOURCE_GROUP" --query "[0].name" -o tsv 2>/dev/null || true)"
+fi
+
+if [[ -z "$ACR_NAME" ]]; then
+  ACR_NAME="acrdemo1$(openssl rand -hex 3)"
+  say "Creating Azure Container Registry '$ACR_NAME' (Basic, admin enabled)"
+  az acr create \
+    -n "$ACR_NAME" \
+    -g "$RESOURCE_GROUP" \
+    --sku Basic \
+    --admin-enabled true \
+    --location "$LOCATION" \
+    -o none
+else
+  say "Reusing existing Azure Container Registry '$ACR_NAME'"
+  az acr update -n "$ACR_NAME" -g "$RESOURCE_GROUP" --admin-enabled true -o none >/dev/null
+fi
+
+ACR_LOGIN_SERVER="$(az acr show -n "$ACR_NAME" -g "$RESOURCE_GROUP" --query loginServer -o tsv)"
+
+# ---- 4. Backend image -------------------------------------------------------
+BACKEND_IMAGE="$ACR_LOGIN_SERVER/$BACKEND_APP:$IMAGE_TAG"
+say "Building backend image $BACKEND_IMAGE (ACR Tasks)"
+az acr build \
+  --registry "$ACR_NAME" \
+  --image "$BACKEND_APP:$IMAGE_TAG" \
+  --image "$BACKEND_APP:latest" \
+  --file backend/Dockerfile \
+  --platform linux \
+  backend \
   -o none
 
-say "Configuring backend env vars + system-assigned managed identity"
+# ---- 5. Backend container app -----------------------------------------------
+if az containerapp show -n "$BACKEND_APP" -g "$RESOURCE_GROUP" >/dev/null 2>&1; then
+  say "Updating existing backend app '$BACKEND_APP' to $IMAGE_TAG"
+  az containerapp update \
+    --name "$BACKEND_APP" --resource-group "$RESOURCE_GROUP" \
+    --image "$BACKEND_IMAGE" \
+    -o none
+else
+  say "Creating backend app '$BACKEND_APP'"
+  ACR_USERNAME="$(az acr credential show -n "$ACR_NAME" --query username -o tsv)"
+  ACR_PASSWORD="$(az acr credential show -n "$ACR_NAME" --query 'passwords[0].value' -o tsv)"
+  az containerapp create \
+    --name "$BACKEND_APP" \
+    --resource-group "$RESOURCE_GROUP" \
+    --environment "$ENV_NAME" \
+    --image "$BACKEND_IMAGE" \
+    --target-port 8080 \
+    --ingress external \
+    --registry-server "$ACR_LOGIN_SERVER" \
+    --registry-username "$ACR_USERNAME" \
+    --registry-password "$ACR_PASSWORD" \
+    --min-replicas 1 --max-replicas 3 \
+    --cpu 0.5 --memory 1.0Gi \
+    -o none
+fi
+
+say "Assigning system-assigned managed identity to backend"
 az containerapp identity assign \
   --name "$BACKEND_APP" --resource-group "$RESOURCE_GROUP" \
   --system-assigned -o none
 
+say "Setting backend env vars"
 az containerapp update \
   --name "$BACKEND_APP" --resource-group "$RESOURCE_GROUP" \
   --set-env-vars \
@@ -133,7 +212,7 @@ BACKEND_MI_PRINCIPAL_ID="$(az containerapp identity show \
   --query principalId -o tsv)"
 say "Backend managed identity principal: $BACKEND_MI_PRINCIPAL_ID"
 
-# ---- 4. Grant RBAC to the backend's managed identity ------------------------
+# ---- 6. Grant RBAC to the backend's managed identity ------------------------
 FOUNDRY_RG="$(az cognitiveservices account list \
   --query "[?name=='$FOUNDRY_ACCOUNT_NAME'] | [0].resourceGroup" -o tsv 2>/dev/null || true)"
 SEARCH_RG="$(az search service list \
@@ -167,36 +246,63 @@ else
   warn "Search service '$SEARCH_SERVICE_NAME' not found; skipping role assignment"
 fi
 
-# ---- 5. Frontend app --------------------------------------------------------
-say "Building and deploying frontend '$FRONTEND_APP' from ./frontend"
-az containerapp up \
-  --name "$FRONTEND_APP" \
-  --resource-group "$RESOURCE_GROUP" \
-  --environment "$ENV_NAME" \
-  --location "$LOCATION" \
-  --source ./frontend \
-  --target-port 8080 \
-  --ingress external \
+# ---- 7. Frontend image ------------------------------------------------------
+FRONTEND_IMAGE="$ACR_LOGIN_SERVER/$FRONTEND_APP:$IMAGE_TAG"
+say "Building frontend image $FRONTEND_IMAGE (ACR Tasks)"
+az acr build \
+  --registry "$ACR_NAME" \
+  --image "$FRONTEND_APP:$IMAGE_TAG" \
+  --image "$FRONTEND_APP:latest" \
+  --file frontend/Dockerfile \
+  --platform linux \
+  frontend \
   -o none
+
+# ---- 8. Frontend container app ----------------------------------------------
+if az containerapp show -n "$FRONTEND_APP" -g "$RESOURCE_GROUP" >/dev/null 2>&1; then
+  say "Updating existing frontend app '$FRONTEND_APP' to $IMAGE_TAG"
+  az containerapp update \
+    --name "$FRONTEND_APP" --resource-group "$RESOURCE_GROUP" \
+    --image "$FRONTEND_IMAGE" \
+    -o none
+else
+  say "Creating frontend app '$FRONTEND_APP'"
+  ACR_USERNAME="$(az acr credential show -n "$ACR_NAME" --query username -o tsv)"
+  ACR_PASSWORD="$(az acr credential show -n "$ACR_NAME" --query 'passwords[0].value' -o tsv)"
+  az containerapp create \
+    --name "$FRONTEND_APP" \
+    --resource-group "$RESOURCE_GROUP" \
+    --environment "$ENV_NAME" \
+    --image "$FRONTEND_IMAGE" \
+    --target-port 8080 \
+    --ingress external \
+    --registry-server "$ACR_LOGIN_SERVER" \
+    --registry-username "$ACR_USERNAME" \
+    --registry-password "$ACR_PASSWORD" \
+    --min-replicas 1 --max-replicas 3 \
+    --cpu 0.25 --memory 0.5Gi \
+    -o none
+fi
 
 say "Pointing frontend nginx proxy at $BACKEND_URL"
 az containerapp update \
   --name "$FRONTEND_APP" --resource-group "$RESOURCE_GROUP" \
-  --set-env-vars "BACKEND_URL=$BACKEND_URL" \
+  --set-env-vars "BACKEND_URL=$BACKEND_URL" "BACKEND_HOST=$BACKEND_FQDN" \
   -o none
 
 FRONTEND_FQDN="$(az containerapp show \
   -n "$FRONTEND_APP" -g "$RESOURCE_GROUP" \
   --query properties.configuration.ingress.fqdn -o tsv)"
 
-# ---- 6. Summary -------------------------------------------------------------
+# ---- 9. Summary -------------------------------------------------------------
 cat <<EOF
 
 ================================================================================
  Deployment complete
 ================================================================================
   Resource group : $RESOURCE_GROUP
-  Environment    : $ENV_NAME ($LOCATION, express)
+  Environment    : $ENV_NAME ($LOCATION, $ENV_MODE)
+  Registry       : $ACR_LOGIN_SERVER
   Backend API    : https://$BACKEND_FQDN
                    curl https://$BACKEND_FQDN/health
   Frontend       : https://$FRONTEND_FQDN
