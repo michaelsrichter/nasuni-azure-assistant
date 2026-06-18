@@ -8,7 +8,9 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:5119',
+        // Proxy SPA /api calls to the local token-proxy sidecar (port 8090),
+        // which forwards to the locally-run hosted agent on :8088.
+        target: 'http://localhost:8090',
         changeOrigin: true
       }
     }
