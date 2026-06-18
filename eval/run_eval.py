@@ -1,25 +1,27 @@
 #!/usr/bin/env python3
-"""Evaluate the Nasuni-on-Azure assistant with Azure AI Foundry built-in evaluators.
+"""Evaluate the Nasuni-on-Azure assistant with Microsoft Foundry built-in evaluators.
+
+This uses the new Foundry evaluations API (the OpenAI Evals surface exposed by
+``azure-ai-projects``), so runs show up under the **New Foundry portal's
+Evaluations tab** (report URLs are ``ai.azure.com/nextgen/.../build/evaluations/...``).
 
 The flow is:
 
 1. Read prompts from ``dataset.jsonl`` (one ``{"query": "..."}`` per line).
 2. Call the deployed agent's non-streaming Responses endpoint for each prompt and
    extract the answer text plus the knowledge-base context the agent retrieved.
-3. Score every (query, response, context) row with a couple of Foundry's built-in
-   *quality* evaluators that are the most meaningful for a RAG assistant:
-     - Groundedness  (is the answer supported by the retrieved context?)
-     - Relevance     (does the answer address the question?)
-     - Retrieval     (did the search return relevant, well-ranked context?)
-4. By default, upload the run to the Foundry project so it shows up under the
-   portal's *Evaluations* tab, and print the ``studio_url``. Use --no-upload to
-   keep everything local.
+3. Upload the (query, response, context) rows as a versioned dataset, then create a
+   Foundry evaluation that scores them with built-in evaluators most meaningful for
+   a RAG assistant:
+     - builtin.groundedness  (is the answer supported by the retrieved context?)
+     - builtin.relevance     (does the answer address the question?)
+     - builtin.retrieval     (did the search return relevant, well-ranked context?)
+4. Poll the run to completion and print the portal report URL + pass/fail counts.
 
 Usage:
-    python run_eval.py                 # full run, logged to the Foundry portal
-    python run_eval.py --no-upload     # local-only run, no portal upload
+    python run_eval.py                 # full run, logged to the New Foundry portal
     python run_eval.py --limit 3       # only the first 3 prompts (cheaper smoke test)
-    python run_eval.py --prep-only     # call the agent + build eval input, skip judging
+    python run_eval.py --prep-only     # call the agent + build eval input, skip scoring
 
 Configuration comes from environment variables (see .env.example); a local .env
 file is loaded automatically if present.
@@ -178,106 +180,115 @@ def build_eval_input(rows: list[dict], agent_url: str, out_path: Path) -> int:
     return written
 
 
-def make_model_config():
-    from azure.ai.evaluation import AzureOpenAIModelConfiguration
+def run_evaluation(input_path: Path, name: str, poll_seconds: int = 8) -> None:
+    """Score the prepared rows with Foundry built-in evaluators via the new Evals API."""
+    from azure.identity import DefaultAzureCredential
+    from azure.ai.projects import AIProjectClient
+    from openai.types.eval_create_params import DataSourceConfigCustom
+    from openai.types.evals.create_eval_jsonl_run_data_source_param import (
+        CreateEvalJSONLRunDataSourceParam,
+        SourceFileID,
+    )
 
-    endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
-    deployment = os.environ.get("MODEL_DEPLOYMENT_NAME")
-    if not endpoint or not deployment:
+    project = os.environ.get("AZURE_AI_PROJECT")
+    model = os.environ.get("MODEL_DEPLOYMENT_NAME")
+    if not project or not model:
         sys.exit(
-            "AZURE_OPENAI_ENDPOINT and MODEL_DEPLOYMENT_NAME must be set "
-            "(see eval/.env.example)."
+            "AZURE_AI_PROJECT and MODEL_DEPLOYMENT_NAME must be set (see eval/.env.example)."
         )
-    cfg = AzureOpenAIModelConfiguration(
-        azure_endpoint=endpoint,
-        azure_deployment=deployment,
-        api_version=os.environ.get("AZURE_OPENAI_API_VERSION", "2024-10-21"),
-    )
-    api_key = os.environ.get("AZURE_OPENAI_API_KEY")
-    if api_key:
-        cfg["api_key"] = api_key  # type: ignore[index]
-    return cfg
 
+    project_client = AIProjectClient(endpoint=project, credential=DefaultAzureCredential())
+    openai_client = project_client.get_openai_client()
 
-def run_evaluation(input_path: Path, upload: bool, name: str) -> None:
-    from azure.ai.evaluation import (
-        GroundednessEvaluator,
-        RelevanceEvaluator,
-        RetrievalEvaluator,
-        evaluate,
+    # Upload the prepared rows as a versioned dataset in the project.
+    version = str(int(time.time()))
+    log(f"uploading dataset '{name}' (version {version})...")
+    dataset = project_client.datasets.upload_file(
+        name=name, version=version, file_path=str(input_path)
     )
 
-    model_config = make_model_config()
-
-    # Keyless (Entra ID) is the default: when no api_key is configured, pass a
-    # DefaultAzureCredential so the evaluators can authenticate the judge model.
-    evaluator_kwargs: dict = {}
-    if not os.environ.get("AZURE_OPENAI_API_KEY"):
-        from azure.identity import DefaultAzureCredential
-
-        evaluator_kwargs["credential"] = DefaultAzureCredential()
-
-    evaluators = {
-        "groundedness": GroundednessEvaluator(model_config, **evaluator_kwargs),
-        "relevance": RelevanceEvaluator(model_config, **evaluator_kwargs),
-        "retrieval": RetrievalEvaluator(model_config, **evaluator_kwargs),
-    }
-    evaluator_config = {
-        "groundedness": {
-            "column_mapping": {
-                "query": "${data.query}",
-                "response": "${data.response}",
-                "context": "${data.context}",
-            }
+    data_source_config = DataSourceConfigCustom(
+        type="custom",
+        item_schema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "response": {"type": "string"},
+                "context": {"type": "string"},
+            },
+            "required": ["query", "response"],
         },
-        "relevance": {
-            "column_mapping": {
-                "query": "${data.query}",
-                "response": "${data.response}",
-            }
+        include_sample_schema=False,
+    )
+    testing_criteria = [
+        {
+            "type": "azure_ai_evaluator",
+            "name": "groundedness",
+            "evaluator_name": "builtin.groundedness",
+            "initialization_parameters": {"model": model},
+            "data_mapping": {
+                "query": "{{item.query}}",
+                "response": "{{item.response}}",
+                "context": "{{item.context}}",
+            },
         },
-        "retrieval": {
-            "column_mapping": {
-                "query": "${data.query}",
-                "context": "${data.context}",
-            }
+        {
+            "type": "azure_ai_evaluator",
+            "name": "relevance",
+            "evaluator_name": "builtin.relevance",
+            "initialization_parameters": {"model": model},
+            "data_mapping": {
+                "query": "{{item.query}}",
+                "response": "{{item.response}}",
+            },
         },
-    }
+        {
+            "type": "azure_ai_evaluator",
+            "name": "retrieval",
+            "evaluator_name": "builtin.retrieval",
+            "initialization_parameters": {"model": model},
+            "data_mapping": {
+                "query": "{{item.query}}",
+                "context": "{{item.context}}",
+            },
+        },
+    ]
 
-    kwargs = {
-        "data": str(input_path),
-        "evaluators": evaluators,
-        "evaluator_config": evaluator_config,
-        "evaluation_name": name,
-    }
-    if upload:
-        project = os.environ.get("AZURE_AI_PROJECT")
-        if not project:
-            sys.exit(
-                "AZURE_AI_PROJECT must be set to upload results, or pass --no-upload."
-            )
-        kwargs["azure_ai_project"] = project
+    log("creating evaluation (groundedness, relevance, retrieval)...")
+    eval_object = openai_client.evals.create(
+        name=name,
+        data_source_config=data_source_config,
+        testing_criteria=testing_criteria,
+    )
+    run = openai_client.evals.runs.create(
+        eval_id=eval_object.id,
+        name=f"{name}-run",
+        data_source=CreateEvalJSONLRunDataSourceParam(
+            type="jsonl",
+            source=SourceFileID(type="file_id", id=dataset.id),
+        ),
+    )
+    log(f"eval {eval_object.id} / run {run.id} submitted; polling...")
 
-    log("running evaluators (groundedness, relevance, retrieval)...")
-    result = evaluate(**kwargs)
+    terminal = {"completed", "failed", "canceled", "error"}
+    while run.status not in terminal:
+        time.sleep(poll_seconds)
+        run = openai_client.evals.runs.retrieve(run_id=run.id, eval_id=eval_object.id)
+        log(f"  status: {run.status}")
 
-    metrics = result.get("metrics", {})
-    log("=== aggregate metrics ===")
-    for key in sorted(metrics):
-        print(f"  {key}: {metrics[key]}")
-
-    studio_url = result.get("studio_url")
-    if studio_url:
-        log(f"portal results: {studio_url}")
-    else:
-        log("local run complete (no portal upload).")
+    counts = getattr(run, "result_counts", None)
+    log(f"=== {run.status} ===")
+    if counts:
+        log(f"passed={counts.passed} failed={counts.failed} errored={counts.errored} total={counts.total}")
+    report_url = getattr(run, "report_url", None)
+    if report_url:
+        log(f"portal results: {report_url}")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", default=str(HERE / "dataset.jsonl"))
     parser.add_argument("--limit", type=int, default=None, help="only first N prompts")
-    parser.add_argument("--no-upload", action="store_true", help="skip portal upload")
     parser.add_argument(
         "--prep-only",
         action="store_true",
@@ -291,14 +302,8 @@ def main() -> int:
     args = parser.parse_args()
 
     if load_dotenv:
-        # override=True so eval/.env wins over any pre-existing shell exports
-        # (e.g. an AZURE_OPENAI_ENDPOINT left over from another project).
+        # override=True so eval/.env wins over any pre-existing shell exports.
         load_dotenv(HERE / ".env", override=True)
-
-    # An empty AZURE_OPENAI_API_KEY="" confuses the evaluators' keyless path;
-    # drop it entirely so they fall back cleanly to Entra ID (DefaultAzureCredential).
-    if not os.environ.get("AZURE_OPENAI_API_KEY", "").strip():
-        os.environ.pop("AZURE_OPENAI_API_KEY", None)
 
     agent_url = os.environ.get("AGENT_API_URL", DEFAULT_AGENT_URL)
     dataset_path = Path(args.dataset)
@@ -324,7 +329,7 @@ def main() -> int:
         log("--prep-only set; skipping evaluators.")
         return 0
 
-    run_evaluation(input_path, upload=not args.no_upload, name=args.name)
+    run_evaluation(input_path, name=args.name)
     return 0
 
 

@@ -165,22 +165,26 @@ dependencies
 
 ## Evaluating answer quality
 
-The [eval/](../eval) harness scores the assistant with Azure AI Foundry's
-**built-in quality evaluators** and (by default) logs the run to the Foundry
-project so it shows up under the portal's **Evaluations** tab.
+The [eval/](../eval) harness scores the assistant with Microsoft Foundry's
+**built-in quality evaluators** using the **new Foundry evaluations API** (the
+OpenAI Evals surface exposed by `azure-ai-projects`), so every run shows up under
+the **New Foundry portal's Evaluations tab** (report URLs look like
+`ai.azure.com/nextgen/.../build/evaluations/...`).
 
 It uses the three RAG-relevant built-ins:
 
 | Evaluator | What it checks | Inputs |
 | --- | --- | --- |
-| **Groundedness** | Is the answer supported by the retrieved knowledge-base context? | query, response, context |
-| **Relevance** | Does the answer actually address the question? | query, response |
-| **Retrieval** | Did `knowledge_base_search` return relevant, well-ranked context? | query, context |
+| **builtin.groundedness** | Is the answer supported by the retrieved knowledge-base context? | query, response, context |
+| **builtin.relevance** | Does the answer actually address the question? | query, response |
+| **builtin.retrieval** | Did `knowledge_base_search` return relevant, well-ranked context? | query, context |
 
 For each prompt in [eval/dataset.jsonl](../eval/dataset.jsonl) the harness calls
 the deployed agent's non-streaming Responses endpoint, extracts the answer plus
-the citations the agent retrieved, then runs the evaluators (a `gpt-4.1-mini`
-judge) and uploads the results.
+the citations the agent retrieved, uploads the `(query, response, context)` rows
+as a versioned project dataset, then creates a Foundry evaluation + run (scored
+by a `gpt-4.1-mini` judge), polls it to completion, and prints the portal report
+URL.
 
 ```bash
 cd eval
@@ -188,18 +192,18 @@ python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env          # fill in / confirm the values, then:
 
-python run_eval.py            # full run, logged to the Foundry portal (prints a studio_url)
+python run_eval.py            # full run; lands in the New Foundry portal (prints a report URL)
 python run_eval.py --limit 3  # cheaper smoke test (first 3 prompts)
-python run_eval.py --no-upload  # score locally, do not upload
-python run_eval.py --prep-only  # only call the agent + build eval input, skip judging
+python run_eval.py --prep-only  # only call the agent + build eval input, skip scoring
 ```
 
-The judge model and result upload authenticate with Entra ID (`az login`) by
-default — leave `AZURE_OPENAI_API_KEY` blank to stay keyless. Point
-`AGENT_API_URL` at `http://127.0.0.1:8090/api/responses` to evaluate a locally
-running agent instead of the deployed one. Per-row eval inputs are written to
-`eval/results/` (gitignored). These runs call the judge model and the agent, so
-they incur consumption-based billing.
+The agent call, dataset upload, and judge model all authenticate with Entra ID
+(`az login`) — the harness is keyless (no API keys; the Foundry account has
+`disableLocalAuth=true`). Point `AGENT_API_URL` at
+`http://127.0.0.1:8090/api/responses` to evaluate a locally running agent
+instead of the deployed one. Per-row eval inputs are written to `eval/results/`
+(gitignored). These runs call the judge model and the agent, so they incur
+consumption-based billing.
 
 ## Troubleshooting matrix
 

@@ -1,6 +1,8 @@
-# Azure AI Foundry evaluation harness for the Nasuni-on-Azure assistant.
-# Pin to a known-good range; the SDK is in active development.
-azure-ai-evaluation>=1.0.0
+# Microsoft Foundry evaluation harness for the Nasuni-on-Azure assistant.
+# Uses the new Foundry evaluations API (OpenAI Evals surface) so runs appear in
+# the New Foundry portal's Evaluations tab. Pin to a known-good range.
+azure-ai-projects>=2.2.0
+openai>=1.0.0
 azure-identity>=1.21.0
 requests>=2.32.0
 python-dotenv>=1.0.1
