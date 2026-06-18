@@ -43,6 +43,7 @@ ENV_NAME="${ENV_NAME:-cae-demo1-${ENV_MODE}}"
 ACR_NAME="${ACR_NAME:-}"   # auto-detected or auto-created
 FRONTEND_APP="${FRONTEND_APP:-chatbot-web}"
 PROXY_CONTAINER="${PROXY_CONTAINER:-token-proxy}"
+EVAL_CONTAINER="${EVAL_CONTAINER:-eval-svc}"
 IMAGE_TAG="${IMAGE_TAG:-$(date +%Y%m%d-%H%M%S)}"
 
 # Foundry hosted agent the sidecar forwards to.
@@ -50,6 +51,10 @@ AGENT_NAME="${AGENT_NAME:-demo1-kb-mslearn}"
 FOUNDRY_ACCOUNT_NAME="${FOUNDRY_ACCOUNT_NAME:-researchfoundry}"
 FOUNDRY_PROJECT_NAME="${FOUNDRY_PROJECT_NAME:-researchProject}"
 FOUNDRY_TOKEN_SCOPE="${FOUNDRY_TOKEN_SCOPE:-https://ai.azure.com/.default}"
+
+# Model deployment the evaluation service uses as the judge model when scoring
+# runs with Foundry's built-in evaluators.
+AZURE_AI_MODEL_DEPLOYMENT_NAME="${AZURE_AI_MODEL_DEPLOYMENT_NAME:-gpt-4.1-mini}"
 
 # Frontend telemetry (injected into the SPA at container start via nginx).
 #   * Application Insights — provisioned/reused below unless a connection string
@@ -262,6 +267,11 @@ FRONTEND_IMAGE="$BUILT_IMAGE"
 build_image "$PROXY_CONTAINER" frontend/proxy/Dockerfile frontend/proxy
 PROXY_IMAGE="$BUILT_IMAGE"
 
+# eval service — FastAPI app that drives Foundry evaluators for the SPA's
+# Evaluations page. Runs as a third container behind nginx (/api/eval/*).
+build_image "$EVAL_CONTAINER" eval/Dockerfile eval .venv results
+EVAL_IMAGE="$BUILT_IMAGE"
+
 ACR_USERNAME="$(az acr credential show -n "$ACR_NAME" --query username -o tsv)"
 ACR_PASSWORD="$(az acr credential show -n "$ACR_NAME" --query 'passwords[0].value' -o tsv)"
 
@@ -331,6 +341,22 @@ properties:
             value: "8090"
           - name: PROXY_HOST
             value: 0.0.0.0
+      - name: $EVAL_CONTAINER
+        image: $EVAL_IMAGE
+        resources:
+          cpu: 0.5
+          memory: 1.0Gi
+        env:
+          # Reach the deployed agent through the token-proxy sidecar (shares the
+          # app network namespace, attaches the managed-identity token).
+          - name: AGENT_API_URL
+            value: http://127.0.0.1:8090/
+          # Foundry project + judge model for the built-in evaluators. Auth is
+          # keyless via the app's managed identity (DefaultAzureCredential).
+          - name: AZURE_AI_PROJECT
+            value: "$PROJECT_ENDPOINT"
+          - name: MODEL_DEPLOYMENT_NAME
+            value: "$AZURE_AI_MODEL_DEPLOYMENT_NAME"
 EOF
 
 if az containerapp show -n "$FRONTEND_APP" -g "$RESOURCE_GROUP" >/dev/null 2>&1; then
