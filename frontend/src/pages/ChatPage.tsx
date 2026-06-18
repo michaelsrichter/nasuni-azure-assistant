@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ChatPanel } from '../components/ChatPanel';
 import { HistoryDrawer } from '../components/HistoryDrawer';
-import { HistoryIcon, PlusIcon } from '../components/icons';
+import { HistoryIcon, PlusIcon, TrashIcon } from '../components/icons';
 import type { ChatTurn } from '../lib/types';
 import {
+  clearSessions,
   deleteSession,
   loadSessions,
   newSessionId,
@@ -50,6 +51,17 @@ export function ChatPage() {
     [startNewChat, activeId],
   );
 
+  const clearAllSessions = useCallback(() => {
+    if (typeof window !== 'undefined') {
+      const confirmed = window.confirm(
+        'Delete all saved conversations? This cannot be undone.',
+      );
+      if (!confirmed) return;
+    }
+    setSessions(clearSessions());
+    startNewChat();
+  }, [startNewChat]);
+
   // Lock body scroll while the drawer is open on mobile.
   useEffect(() => {
     document.body.classList.toggle('drawer-locked', drawerOpen);
@@ -68,18 +80,36 @@ export function ChatPage() {
             <p className="rail-empty">No saved conversations yet.</p>
           ) : (
             sessions.map((s) => (
-              <button
+              <div
                 key={s.id}
-                type="button"
                 className={`rail-item${s.id === activeId ? ' active' : ''}`}
-                onClick={() => openSession(s)}
-                title={s.title}
               >
-                {s.title}
-              </button>
+                <button
+                  type="button"
+                  className="rail-item-main"
+                  onClick={() => openSession(s)}
+                  title={s.title}
+                >
+                  {s.title}
+                </button>
+                <button
+                  type="button"
+                  className="icon-button rail-item-delete"
+                  onClick={() => removeSession(s.id)}
+                  aria-label={`Delete conversation: ${s.title}`}
+                >
+                  <TrashIcon />
+                </button>
+              </div>
             ))
           )}
         </div>
+        {sessions.length > 0 && (
+          <button type="button" className="rail-clear-all" onClick={clearAllSessions}>
+            <TrashIcon />
+            Delete all
+          </button>
+        )}
       </aside>
 
       <div className="chat-main">
@@ -114,6 +144,7 @@ export function ChatPage() {
         onClose={() => setDrawerOpen(false)}
         onSelect={openSession}
         onDelete={removeSession}
+        onClearAll={clearAllSessions}
         onNewChat={startNewChat}
       />
     </div>

@@ -8,6 +8,7 @@ interface HistoryDrawerProps {
   onClose: () => void;
   onSelect: (session: StoredSession) => void;
   onDelete: (id: string) => void;
+  onClearAll: () => void;
   onNewChat: () => void;
 }
 
@@ -30,6 +31,7 @@ export function HistoryDrawer({
   onClose,
   onSelect,
   onDelete,
+  onClearAll,
   onNewChat,
 }: HistoryDrawerProps) {
   return (
@@ -77,6 +79,13 @@ export function HistoryDrawer({
               </li>
             ))}
           </ul>
+        )}
+
+        {sessions.length > 0 && (
+          <button type="button" className="drawer-clear-all" onClick={onClearAll}>
+            <TrashIcon />
+            Delete all conversations
+          </button>
         )}
       </aside>
     </>

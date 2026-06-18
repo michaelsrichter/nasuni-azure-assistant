@@ -260,17 +260,11 @@ a {
 }
 
 .rail-item {
-  text-align: left;
-  padding: 9px 10px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
   border-radius: var(--radius-sm);
   border: 1px solid transparent;
-  background: transparent;
-  color: var(--text);
-  cursor: pointer;
-  font-size: 13px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .rail-item:hover {
@@ -280,7 +274,66 @@ a {
 .rail-item.active {
   background: rgba(18, 179, 166, 0.12);
   border-color: var(--border);
+}
+
+.rail-item-main {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  padding: 9px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rail-item.active .rail-item-main {
   color: var(--brand);
+}
+
+.rail-item-delete {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  padding: 6px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.rail-item:hover .rail-item-delete,
+.rail-item:focus-within .rail-item-delete {
+  opacity: 1;
+}
+
+.rail-item-delete:hover {
+  color: var(--error);
+}
+
+.rail-clear-all,
+.drawer-clear-all {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.rail-clear-all:hover,
+.drawer-clear-all:hover {
+  color: var(--error);
+  border-color: var(--error);
 }
 
 .chat-main {
@@ -921,6 +974,43 @@ a {
   color: var(--muted);
   font-size: 12px;
   border-top: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.footer-build {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  font-size: 11px;
+  color: var(--muted);
+  min-width: 0;
+}
+
+.footer-build-sha {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--brand);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.footer-build-sha:hover {
+  text-decoration: underline;
+}
+
+.footer-build-msg {
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.footer-build-meta {
+  opacity: 0.85;
 }
 
 /* ============================================================================
