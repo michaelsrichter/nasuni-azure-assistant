@@ -9,9 +9,17 @@
 // Non-secret links (GitHub, LinkedIn, docs) are plain constants — they are safe
 // to ship in the bundle.
 
+export interface BuildInfo {
+  commit?: string;
+  message?: string;
+  author?: string;
+  time?: string;
+}
+
 export interface AppRuntimeConfig {
   appInsightsConnectionString?: string;
   clarityProjectId?: string;
+  buildInfo?: BuildInfo;
 }
 
 declare global {
@@ -34,6 +42,14 @@ function clean(value: string | undefined): string | undefined {
 export const config = {
   appInsightsConnectionString: clean(runtime.appInsightsConnectionString),
   clarityProjectId: clean(runtime.clarityProjectId),
+};
+
+const rawBuild = runtime.buildInfo ?? {};
+export const buildInfo = {
+  commit: clean(rawBuild.commit),
+  message: clean(rawBuild.message),
+  author: clean(rawBuild.author),
+  time: clean(rawBuild.time),
 };
 
 export const APP_NAME = 'Nasuni on Azure Assistant';

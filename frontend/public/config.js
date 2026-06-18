@@ -4,4 +4,10 @@
 window.__APP_CONFIG__ = {
   appInsightsConnectionString: '',
   clarityProjectId: '',
+  buildInfo: {
+    commit: '',
+    message: '',
+    author: '',
+    time: '',
+  },
 };

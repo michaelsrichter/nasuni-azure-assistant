@@ -1,8 +1,22 @@
 import { Link } from 'react-router-dom';
-import { APP_NAME, links } from '../config';
+import { APP_NAME, buildInfo, links } from '../config';
+
+function formatBuildTime(iso: string | undefined): string | undefined {
+  if (!iso) return undefined;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
 
 export function Footer() {
   const year = new Date().getFullYear();
+  const buildTime = formatBuildTime(buildInfo.time);
   return (
     <footer className="site-footer">
       <div className="footer-inner">
@@ -76,6 +90,26 @@ export function Footer() {
 
       <div className="footer-bottom">
         <span>© {year} Mike Richter. Demo project — not affiliated endorsement.</span>
+        {buildInfo.commit && (
+          <span className="footer-build">
+            <a
+              href={`${links.github}/commit/${buildInfo.commit}`}
+              target="_blank"
+              rel="noreferrer"
+              className="footer-build-sha"
+              title="View this commit on GitHub"
+            >
+              {buildInfo.commit.slice(0, 7)}
+            </a>
+            {buildInfo.message && (
+              <span className="footer-build-msg" title={buildInfo.message}>
+                {buildInfo.message}
+              </span>
+            )}
+            {buildInfo.author && <span className="footer-build-meta">{buildInfo.author}</span>}
+            {buildTime && <span className="footer-build-meta">{buildTime}</span>}
+          </span>
+        )}
       </div>
     </footer>
   );

@@ -177,6 +177,20 @@ else
   say "Clarity: disabled (set CLARITY_PROJECT_ID to enable)"
 fi
 
+# ---- Build/commit info (injected into the footer via nginx /config.js) -------
+# Captured fresh on every frontend deploy so the footer always reflects the
+# exact commit that was shipped. The message is sanitized to a single safe line
+# because it is embedded in a JSON string inside an nginx string literal.
+GIT_COMMIT_SHA="$(git rev-parse HEAD 2>/dev/null || echo '')"
+GIT_COMMIT_AUTHOR="$(git log -1 --format='%an' 2>/dev/null || echo '')"
+GIT_COMMIT_TIME="$(git log -1 --format='%cI' 2>/dev/null || echo '')"
+GIT_COMMIT_MESSAGE="$(git log -1 --format='%s' 2>/dev/null \
+  | tr -d '"\\'"'" \
+  | tr '\n\r\t' '   ' \
+  | cut -c1-72)"
+say "Build info: ${GIT_COMMIT_SHA:0:7} \"$GIT_COMMIT_MESSAGE\" by $GIT_COMMIT_AUTHOR @ $GIT_COMMIT_TIME"
+
+
 # ---- 4. Build images (frontend only) ----------------------------------------
 # Each image's tag is derived from a hash of its build context, so an unchanged
 # image is never rebuilt or re-pushed. The timestamp IMAGE_TAG is kept only for
@@ -293,6 +307,14 @@ properties:
             value: "$APPLICATIONINSIGHTS_CONNECTION_STRING"
           - name: CLARITY_PROJECT_ID
             value: "$CLARITY_PROJECT_ID"
+          - name: GIT_COMMIT_SHA
+            value: "$GIT_COMMIT_SHA"
+          - name: GIT_COMMIT_MESSAGE
+            value: "$GIT_COMMIT_MESSAGE"
+          - name: GIT_COMMIT_AUTHOR
+            value: "$GIT_COMMIT_AUTHOR"
+          - name: GIT_COMMIT_TIME
+            value: "$GIT_COMMIT_TIME"
       - name: $PROXY_CONTAINER
         image: $PROXY_IMAGE
         resources:

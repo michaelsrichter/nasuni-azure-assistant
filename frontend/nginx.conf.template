@@ -38,7 +38,7 @@ server {
     location = /config.js {
         default_type application/javascript;
         add_header Cache-Control "no-store";
-        return 200 'window.__APP_CONFIG__ = { "appInsightsConnectionString": "${APPLICATIONINSIGHTS_CONNECTION_STRING}", "clarityProjectId": "${CLARITY_PROJECT_ID}" };';
+        return 200 'window.__APP_CONFIG__ = { "appInsightsConnectionString": "${APPLICATIONINSIGHTS_CONNECTION_STRING}", "clarityProjectId": "${CLARITY_PROJECT_ID}", "buildInfo": { "commit": "${GIT_COMMIT_SHA}", "message": "${GIT_COMMIT_MESSAGE}", "author": "${GIT_COMMIT_AUTHOR}", "time": "${GIT_COMMIT_TIME}" } };';
     }
 
     # Cache hashed assets aggressively.
