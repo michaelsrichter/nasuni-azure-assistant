@@ -1,0 +1,7 @@
+# Local secrets and generated artifacts -- never commit.
+.env
+.venv/
+results/
+*.eval.jsonl
+__pycache__/
+*.pyc

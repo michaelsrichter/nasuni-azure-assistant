@@ -111,6 +111,22 @@ cd frontend && npm run build                          # tsc + Vite bundle
 
 See [docs/testing.md](docs/testing.md) for the test matrix.
 
+## Evaluating answer quality
+
+[eval/](eval) scores the deployed assistant with Azure AI Foundry's built-in
+**Groundedness**, **Relevance**, and **Retrieval** evaluators and logs each run
+to the Foundry portal's *Evaluations* tab:
+
+```bash
+cd eval
+python3 -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+python run_eval.py --limit 3   # quick smoke test; prints a studio_url
+```
+
+See [docs/operations.md](docs/operations.md#evaluating-answer-quality) for the full guide.
+
 ## Docs
 
 - [docs/architecture.md](docs/architecture.md) — components, sequence diagram, streaming contract, design rationale

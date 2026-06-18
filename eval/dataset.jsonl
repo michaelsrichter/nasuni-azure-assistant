@@ -1,0 +1,10 @@
+{"query": "What Azure VM SKUs does Nasuni recommend for an Edge Appliance, and how do those compare to the current Azure-recommended general-purpose D-series and E-series families on Microsoft Learn?"}
+{"query": "Walk me through deploying a Nasuni Edge Appliance on Microsoft Azure end-to-end, including the Azure resource group, vNet, and storage account prerequisites I should create first per Azure Well-Architected guidance."}
+{"query": "How do I install Nasuni in an Azure Local (formerly Azure Stack HCI) cluster, and what Azure Local cluster prerequisites does Microsoft require before I add the VM?"}
+{"query": "How do I configure Azure Blob Storage as the back-end for Nasuni UniFS, and which Azure blob redundancy option (LRS, ZRS, GRS, RA-GZRS) should I pick for a production global filesystem?"}
+{"query": "Explain the Nasuni Azure Blob Storage failover process and how it relates to Microsoft's documented storage account failover and last-sync-time behavior."}
+{"query": "What is the difference between NDS for Azure and standard Nasuni volumes, and how does NDS plug into Azure AI Search for RAG scenarios?"}
+{"query": "How do I set up Microsoft Entra ID SSO for File IQ, and what Entra enterprise application, claims, and group-assignment settings does Microsoft recommend for SAML apps?"}
+{"query": "How do I send Nasuni audit and ransomware events to Microsoft Sentinel, and what Sentinel data connector type, Log Analytics workspace, and analytics rules should I configure on the Microsoft side?"}
+{"query": "How do I publish Nasuni Web Access through Azure Front Door, and what Front Door SKU, WAF policy, and origin health-probe settings does Microsoft recommend for a globally distributed file portal?"}
+{"query": "What are the Azure egress and Azure AI Search cost considerations when running Nasuni NDS + Azure AI Search at scale, factoring in Microsoft's published pricing tiers and replica/partition guidance?"}
