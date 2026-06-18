@@ -9,6 +9,12 @@ import { useTheme } from './theme/useTheme';
 const ArchitecturePage = lazy(() =>
   import('./pages/ArchitecturePage').then((m) => ({ default: m.ArchitecturePage })),
 );
+const KnowledgeBasePage = lazy(() =>
+  import('./pages/KnowledgeBasePage').then((m) => ({ default: m.KnowledgeBasePage })),
+);
+const CostsPage = lazy(() =>
+  import('./pages/CostsPage').then((m) => ({ default: m.CostsPage })),
+);
 const PrivacyPage = lazy(() =>
   import('./pages/PrivacyPage').then((m) => ({ default: m.PrivacyPage })),
 );
@@ -27,6 +33,8 @@ function App() {
           <Routes>
             <Route path="/" element={<ChatPage />} />
             <Route path="/architecture" element={<ArchitecturePage />} />
+            <Route path="/knowledge-base" element={<KnowledgeBasePage />} />
+            <Route path="/costs" element={<CostsPage />} />
             <Route path="/privacy" element={<PrivacyPage />} />
             <Route path="/terms" element={<TermsPage />} />
             <Route path="*" element={<ChatPage />} />

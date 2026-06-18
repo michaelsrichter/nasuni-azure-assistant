@@ -23,6 +23,18 @@ export function Header({ theme, onToggleTheme }: HeaderProps) {
         >
           Architecture
         </NavLink>
+        <NavLink
+          to="/knowledge-base"
+          className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}
+        >
+          Knowledge Base
+        </NavLink>
+        <NavLink
+          to="/costs"
+          className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}
+        >
+          Costs
+        </NavLink>
         <a className="nav-link" href={links.github} target="_blank" rel="noreferrer">
           GitHub
         </a>
