@@ -1,4 +1,4 @@
-import type { Citation } from '../api/streamChat';
+import type { Citation, Governance } from '../api/streamChat';
 import type { TokenUsage } from '../pricing';
 
 export interface ToolCall {
@@ -14,6 +14,7 @@ export interface ChatTurn {
   text: string;
   toolCalls: ToolCall[];
   citations: Citation[];
+  governance: Governance | null;
   model: string;
   usage: TokenUsage | null;
   elapsedMs: number;

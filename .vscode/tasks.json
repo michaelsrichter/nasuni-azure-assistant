@@ -4,8 +4,11 @@
     {
       "label": "frontend: dev",
       "type": "shell",
-      "command": "npm",
-      "args": ["run", "dev"],
+      "command": "bash",
+      "args": [
+        "-c",
+        "fuser -k 5173/tcp 2>/dev/null; sleep 0.5; exec npm run dev"
+      ],
       "options": {
         "cwd": "${workspaceFolder}/frontend"
       },
@@ -55,8 +58,11 @@
     {
       "label": "agent: dev",
       "type": "shell",
-      "command": "dotnet",
-      "args": ["run"],
+      "command": "bash",
+      "args": [
+        "-c",
+        "fuser -k 8088/tcp 2>/dev/null; sleep 1; exec dotnet run"
+      ],
       "options": {
         "cwd": "${workspaceFolder}/hosted-agent"
       },
@@ -90,8 +96,11 @@
     {
       "label": "proxy: dev",
       "type": "shell",
-      "command": "node",
-      "args": ["server.mjs"],
+      "command": "bash",
+      "args": [
+        "-c",
+        "fuser -k 8090/tcp 2>/dev/null; sleep 0.5; exec node server.mjs"
+      ],
       "options": {
         "cwd": "${workspaceFolder}/frontend/proxy",
         "env": {
@@ -128,9 +137,70 @@
       }
     },
     {
+      "label": "eval: service",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-c",
+        "fuser -k 8099/tcp 2>/dev/null; sleep 0.5; [ -d .venv ] && source .venv/bin/activate; exec python -m uvicorn service.app:app --host 127.0.0.1 --port 8099"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}/eval"
+      },
+      "isBackground": true,
+      "icon": {
+        "id": "beaker",
+        "color": "terminal.ansiCyan"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "demo",
+        "showReuseMessage": false,
+        "clear": true,
+        "echo": true,
+        "focus": false
+      },
+      "problemMatcher": {
+        "owner": "eval-service",
+        "pattern": {
+          "regexp": "^\\s*(.*)$",
+          "message": 1
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "^.*$",
+          "endsPattern": "^.*(Uvicorn running on|Application startup complete).*$"
+        }
+      }
+    },
+    {
+      "label": "demo: free-ports",
+      "detail": "Kills any lingering demo processes still holding the agent (:8088), proxy (:8090), eval (:8099) or SPA (:5173) ports so the stack can restart cleanly.",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-c",
+        "for p in 8088 8090 8099 5173; do if fuser -k $p/tcp 2>/dev/null; then echo \"Cleared port $p\"; fi; done; sleep 1; pkill -f Demo1.Agent 2>/dev/null; pkill -f frontend/proxy/server.mjs 2>/dev/null; echo Demo ports cleared.; exit 0"
+      ],
+      "icon": {
+        "id": "trash",
+        "color": "terminal.ansiRed"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "demo",
+        "showReuseMessage": false,
+        "clear": true,
+        "focus": false
+      },
+      "problemMatcher": []
+    },
+    {
       "label": "demo: start (full stack)",
-      "detail": "Runs the hosted agent (:8088), token-proxy sidecar (:8090) and the SPA (:5173) together.",
-      "dependsOn": ["agent: dev", "proxy: dev", "frontend: dev"],
+      "detail": "Frees the demo ports, then runs the hosted agent (:8088), token-proxy sidecar (:8090), eval service (:8099) and the SPA (:5173) together. Each service first runs 'demo: free-ports' (deduped, so it executes once) to clear any stale process before binding.",
+      "dependsOn": ["agent: dev", "proxy: dev", "eval: service", "frontend: dev"],
       "dependsOrder": "parallel",
       "icon": {
         "id": "rocket",

@@ -7,6 +7,12 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
+      // The evaluation service (eval/service/app.py) handles /api/eval/*.
+      // Listed first so it wins over the broader /api rule below.
+      '/api/eval': {
+        target: 'http://localhost:8099',
+        changeOrigin: true,
+      },
       '/api': {
         // Proxy SPA /api calls to the local token-proxy sidecar (port 8090),
         // which forwards to the locally-run hosted agent on :8088.

@@ -12,12 +12,34 @@ export interface Citation {
   snippet?: string;
 }
 
+// --- Governance verdict (from the Agent Governance Toolkit gate) ---
+export interface InjectionInfo {
+  detected: boolean;
+  type: string;
+  threatLevel: string;
+  confidence: number;
+}
+
+export interface Governance {
+  enforced: boolean;
+  allowed: boolean;
+  decision: 'allowed' | 'blocked' | 'disabled';
+  category?: 'capability' | 'prompt_injection' | 'data_egress';
+  reason: string;
+  policy: string;
+  rule?: string;
+  agentDid: string;
+  auditSeq?: number;
+  auditHash?: string;
+  injection?: InjectionInfo;
+}
+
 // --- Stream events surfaced to the UI ---
 export type StreamEvent =
   | { kind: 'created'; responseId: string }
   | { kind: 'toolCallStarted'; callId: string; name: string }
   | { kind: 'toolCallArgsDelta'; callId: string; delta: string }
-  | { kind: 'toolCallCompleted'; callId: string; name: string; citations: Citation[] }
+  | { kind: 'toolCallCompleted'; callId: string; name: string; citations: Citation[]; governance: Governance | null }
   | { kind: 'textDelta'; delta: string }
   | { kind: 'completed'; model: string; usage: TokenUsage | null }
   | { kind: 'error'; message: string };
@@ -25,6 +47,7 @@ export type StreamEvent =
 export interface StreamRequest {
   input: string;
   conversationId?: string;
+  governanceOn?: boolean;
   signal?: AbortSignal;
 }
 
@@ -36,7 +59,10 @@ export async function* streamChat(req: StreamRequest): AsyncGenerator<StreamEven
 
   const res = await fetch(`${API_BASE}/api/responses`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'x-agt-governance': req.governanceOn === false ? 'off' : 'on',
+    },
     body: JSON.stringify(body),
     signal: req.signal,
   });
@@ -92,7 +118,8 @@ function translate(event: string, payload: unknown, toolCallNames: Map<string, s
         const callId = String(item.call_id ?? '');
         const name = toolCallNames.get(callId) ?? '';
         const citations = parseCitations(item.output);
-        return { kind: 'toolCallCompleted', callId, name, citations };
+        const governance = parseGovernance(item.output);
+        return { kind: 'toolCallCompleted', callId, name, citations, governance };
       }
       return null;
     }
@@ -129,7 +156,14 @@ function translate(event: string, payload: unknown, toolCallNames: Map<string, s
 function parseCitations(output: unknown): Citation[] {
   if (typeof output !== 'string') return [];
   try {
-    const arr = JSON.parse(output);
+    const parsed = JSON.parse(output);
+    // The governed tool returns { results, governance }; older/raw output is a
+    // bare array. Support both.
+    const arr = Array.isArray(parsed)
+      ? parsed
+      : Array.isArray((parsed as Record<string, unknown>)?.results)
+        ? (parsed as Record<string, unknown>).results
+        : [];
     if (!Array.isArray(arr)) return [];
     return arr
       .filter((x): x is Record<string, unknown> => typeof x === 'object' && x !== null)
@@ -142,6 +176,38 @@ function parseCitations(output: unknown): Citation[] {
       }));
   } catch {
     return [];
+  }
+}
+
+function parseGovernance(output: unknown): Governance | null {
+  if (typeof output !== 'string') return null;
+  try {
+    const parsed = JSON.parse(output) as Record<string, unknown>;
+    const g = parsed?.governance as Record<string, unknown> | undefined;
+    if (!g || typeof g !== 'object') return null;
+    const inj = g.injection as Record<string, unknown> | undefined;
+    return {
+      enforced: Boolean(g.enforced),
+      allowed: Boolean(g.allowed),
+      decision: (g.decision as Governance['decision']) ?? 'allowed',
+      category: g.category as Governance['category'],
+      reason: String(g.reason ?? ''),
+      policy: String(g.policy ?? ''),
+      rule: g.rule == null ? undefined : String(g.rule),
+      agentDid: String(g.agentDid ?? ''),
+      auditSeq: g.auditSeq == null ? undefined : Number(g.auditSeq),
+      auditHash: g.auditHash == null ? undefined : String(g.auditHash),
+      injection: inj
+        ? {
+            detected: Boolean(inj.detected),
+            type: String(inj.type ?? 'None'),
+            threatLevel: String(inj.threatLevel ?? 'None'),
+            confidence: Number(inj.confidence ?? 0),
+          }
+        : undefined,
+    };
+  } catch {
+    return null;
   }
 }
 

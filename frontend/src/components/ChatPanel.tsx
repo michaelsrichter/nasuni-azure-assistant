@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { streamChat, type Citation, type StreamEvent } from '../api/streamChat';
+import { streamChat, type Citation, type Governance, type StreamEvent } from '../api/streamChat';
 import type { ChatTurn } from '../lib/types';
 import { trackEvent, trackException } from '../lib/telemetry';
 import { ToolPill } from './ToolPill';
@@ -9,10 +9,11 @@ import { CannedQuestions } from './CannedQuestions';
 interface ChatPanelProps {
   initialTurns?: ChatTurn[];
   readOnly?: boolean;
+  governanceOn?: boolean;
   onPersist?: (turns: ChatTurn[]) => void;
 }
 
-export function ChatPanel({ initialTurns = [], readOnly = false, onPersist }: ChatPanelProps) {
+export function ChatPanel({ initialTurns = [], readOnly = false, governanceOn = true, onPersist }: ChatPanelProps) {
   const [turns, setTurns] = useState<ChatTurn[]>(initialTurns);
   const [question, setQuestion] = useState('');
   const [busy, setBusy] = useState(false);
@@ -68,6 +69,7 @@ export function ChatPanel({ initialTurns = [], readOnly = false, onPersist }: Ch
         text: '',
         toolCalls: [],
         citations: [],
+        governance: null,
         model: '',
         usage: null,
         elapsedMs: 0,
@@ -80,7 +82,7 @@ export function ChatPanel({ initialTurns = [], readOnly = false, onPersist }: Ch
 
     const t0 = performance.now();
     try {
-      for await (const ev of streamChat({ input: q })) {
+      for await (const ev of streamChat({ input: q, governanceOn })) {
         setTurns((all) =>
           all.map((turn) => (turn.id === id ? applyEvent(turn, ev, t0) : turn)),
         );
@@ -96,7 +98,7 @@ export function ChatPanel({ initialTurns = [], readOnly = false, onPersist }: Ch
       setBusy(false);
       inputRef.current?.focus();
     }
-  }, [question, busy, readOnly]);
+  }, [question, busy, readOnly, governanceOn]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -149,6 +151,7 @@ export function ChatPanel({ initialTurns = [], readOnly = false, onPersist }: Ch
                     ))}
                   </div>
                 )}
+                {turn.governance && <GovernanceCard governance={turn.governance} />}
                 {turn.error && <span className="error">{turn.error}</span>}
                 {turn.text.length > 0 && <pre className="answer">{turn.text}</pre>}
                 {!turn.done && turn.text.length === 0 && turn.toolCalls.length === 0 && (
@@ -215,6 +218,7 @@ function applyEvent(turn: ChatTurn, ev: StreamEvent, t0: number): ChatTurn {
           tc.callId === ev.callId ? { ...tc, done: true } : tc,
         ),
         citations: dedupeCitations([...turn.citations, ...ev.citations]),
+        governance: ev.governance ?? turn.governance,
       };
     case 'textDelta':
       return { ...turn, text: turn.text + ev.delta };
@@ -247,6 +251,66 @@ function dedupeCitations(citations: Citation[]): Citation[] {
     }
   }
   return out;
+}
+
+function GovernanceCard({ governance }: { governance: Governance }) {
+  if (governance.decision === 'disabled') {
+    return (
+      <div className="gov-card gov-disabled" role="note">
+        <span className="gov-chip gov-chip-off">Governance OFF</span>
+        <span className="gov-text">
+          Request ran ungoverned — no policy enforcement, prompt-injection screening, or audit entry.
+        </span>
+      </div>
+    );
+  }
+
+  if (governance.decision === 'blocked') {
+    const label =
+      governance.category === 'prompt_injection'
+        ? 'Prompt-injection blocked'
+        : governance.category === 'data_egress'
+          ? 'Sensitive-data egress blocked'
+          : 'Policy blocked';
+    return (
+      <div className="gov-card gov-blocked" role="alert">
+        <div className="gov-head">
+          <span className="gov-chip gov-chip-block">⛔ {label}</span>
+          {governance.injection?.detected && (
+            <span className="gov-meta">
+              {governance.injection.type} · {governance.injection.threatLevel} · conf{' '}
+              {Math.round(governance.injection.confidence * 100)}%
+            </span>
+          )}
+        </div>
+        <div className="gov-text">{governance.reason}</div>
+        <div className="gov-foot">
+          <span title="Agent decentralized identifier">{governance.agentDid}</span>
+          {governance.auditSeq != null && (
+            <span title="Tamper-evident audit sequence">audit #{governance.auditSeq}</span>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="gov-card gov-allowed" role="note">
+      <div className="gov-head">
+        <span className="gov-chip gov-chip-ok">✓ Governed</span>
+        <span className="gov-meta">
+          {governance.policy}
+          {governance.rule ? ` · ${governance.rule}` : ''}
+        </span>
+      </div>
+      <div className="gov-foot">
+        <span title="Agent decentralized identifier">{governance.agentDid}</span>
+        {governance.auditSeq != null && (
+          <span title="Tamper-evident audit sequence">audit #{governance.auditSeq}</span>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function CitationsList({ citations }: { citations: Citation[] }) {

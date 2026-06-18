@@ -51,6 +51,16 @@ export function Footer() {
                 Knowledge Bases
               </a>
             </li>
+            <li>
+              <a href={links.agentGovernance} target="_blank" rel="noreferrer">
+                Agent Governance Toolkit
+              </a>
+            </li>
+            <li>
+              <a href={links.foundryEvaluations} target="_blank" rel="noreferrer">
+                Foundry Evaluations
+              </a>
+            </li>
           </ul>
         </div>
 

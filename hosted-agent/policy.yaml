@@ -1,0 +1,20 @@
+# Agent Governance Toolkit (AGT) policy for the demo1 Nasuni-on-Azure agent.
+#
+# This file governs which *capabilities* (tools) the agent may invoke. The AGT
+# policy engine reliably evaluates `tool_name`-scoped rules; content-level
+# controls (prompt-injection and sensitive-data egress) are enforced in code in
+# GovernanceGate.cs because the policy condition language does not bind tool
+# arguments.
+#
+# Default-deny means the agent can only ever call the single sanctioned tool —
+# if a future model run tried to invoke anything else, it would be blocked.
+apiVersion: governance.toolkit/v1
+version: "1.0"
+name: demo1-governance
+default_action: deny
+rules:
+  - name: allow-knowledge-base-search
+    condition: "tool_name == 'knowledge_base_search'"
+    action: allow
+    priority: 10
+    description: "knowledge_base_search is the only capability this agent is sanctioned to use."

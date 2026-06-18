@@ -19,7 +19,7 @@ export function ToolPill({ name, args, done }: ToolPillProps) {
 }
 
 function humanizeName(name: string): string {
-  if (name === 'knowledge_base_search') return 'the knowledge base (Nasuni docs + Microsoft Learn)';
+  if (name === 'knowledge_base_search') return 'the knowledge base';
   return name.replace(/_/g, ' ');
 }
 

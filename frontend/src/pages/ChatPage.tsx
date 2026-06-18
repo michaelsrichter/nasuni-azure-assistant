@@ -15,6 +15,7 @@ import {
 export function ChatPage() {
   const [sessions, setSessions] = useState<StoredSession[]>(() => loadSessions());
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [governanceOn, setGovernanceOn] = useState(true);
 
   // `chatKey` forces a fresh ChatPanel instance when starting/loading a session.
   const [chatKey, setChatKey] = useState(0);
@@ -114,25 +115,44 @@ export function ChatPage() {
 
       <div className="chat-main">
         <div className="chat-toolbar">
-          <button
-            type="button"
-            className="icon-button history-button"
-            onClick={() => setDrawerOpen(true)}
-            aria-label="Open history"
+          <div className="toolbar-mobile-actions">
+            <button
+              type="button"
+              className="icon-button history-button"
+              onClick={() => setDrawerOpen(true)}
+              aria-label="Open history"
+            >
+              <HistoryIcon />
+              <span>History</span>
+            </button>
+            <button type="button" className="ghost-button" onClick={startNewChat}>
+              <PlusIcon />
+              <span>New chat</span>
+            </button>
+          </div>
+          <label
+            className={`gov-toggle${governanceOn ? ' on' : ' off'}`}
+            title="Agent Governance Toolkit: deterministic policy enforcement, prompt-injection screening, sensitive-data egress control, and a tamper-evident audit log."
           >
-            <HistoryIcon />
-            <span>History</span>
-          </button>
-          <button type="button" className="ghost-button" onClick={startNewChat}>
-            <PlusIcon />
-            <span>New chat</span>
-          </button>
+            <input
+              type="checkbox"
+              checked={governanceOn}
+              onChange={(e) => setGovernanceOn(e.target.checked)}
+            />
+            <span className="gov-toggle-track" aria-hidden>
+              <span className="gov-toggle-thumb" />
+            </span>
+            <span className="gov-toggle-label">
+              Governance {governanceOn ? 'ON' : 'OFF'}
+            </span>
+          </label>
         </div>
 
         <ChatPanel
           key={chatKey}
           initialTurns={replay?.turns ?? []}
           readOnly={replay?.readOnly ?? false}
+          governanceOn={governanceOn}
           onPersist={handlePersist}
         />
       </div>

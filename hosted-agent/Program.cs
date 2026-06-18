@@ -1,7 +1,9 @@
 using Azure.AI.Projects;
 using Demo1.Agent;
+using Demo1.Agent.Governance;
 using Demo1.Agent.Tools;
 using DotNetEnv;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry.Hosting;
 using Microsoft.Extensions.AI;
@@ -20,6 +22,18 @@ var knowledgeBaseName = Environment.GetEnvironmentVariable("DEMO1_KNOWLEDGE_BASE
 var credential = CredentialFactory.Create();
 var kbTool = new KnowledgeBaseSearchTool(searchEndpoint, knowledgeBaseName, credential);
 
+// Agent Governance Toolkit: deterministic policy enforcement, prompt-injection
+// detection, sensitive-data egress control, and a tamper-evident audit log
+// applied to every knowledge-base search. The governance toggle is read from
+// the per-request `x-agt-governance` header via IHttpContextAccessor.
+var policyPath = Path.Combine(AppContext.BaseDirectory, "policy.yaml");
+if (!File.Exists(policyPath)) policyPath = Path.Combine(Directory.GetCurrentDirectory(), "policy.yaml");
+var auditPath = Environment.GetEnvironmentVariable("AGT_AUDIT_PATH")
+    ?? Path.Combine(Directory.GetCurrentDirectory(), "agt-audit.json");
+var gate = new GovernanceGate(policyPath, auditPath);
+var httpContextAccessor = new HttpContextAccessor();
+var governedKb = new GovernedKnowledgeBaseSearch(kbTool, gate, httpContextAccessor);
+
 AIAgent agent = new AIProjectClient(projectEndpoint, credential)
     .AsAIAgent(
         model: deployment,
@@ -28,10 +42,13 @@ AIAgent agent = new AIProjectClient(projectEndpoint, credential)
         description: "Microsoft developer-platform assistant grounded via the kb-mslearn knowledge base.",
         tools:
         [
-            AIFunctionFactory.Create(kbTool.SearchAsync, "knowledge_base_search"),
+            AIFunctionFactory.Create(governedKb.SearchAsync, "knowledge_base_search"),
         ]);
 
 var builder = AgentHost.CreateBuilder(args);
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddSingleton<IHttpContextAccessor>(httpContextAccessor);
+builder.Services.AddSingleton(gate);
 builder.Services.AddFoundryResponses(agent);
 builder.RegisterProtocol("responses", endpoints => endpoints.MapFoundryResponses());
 

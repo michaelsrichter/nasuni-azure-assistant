@@ -30,6 +30,7 @@ hosted-agent/bin/
 hosted-agent/obj/
 hosted-agent/.env
 hosted-agent/.azure/
+hosted-agent/agt-audit.json
 frontend/proxy/node_modules/
 
 # azd ai agent init scaffold (regenerated from hosted-agent/ + manifest)

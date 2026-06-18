@@ -155,8 +155,9 @@ a {
   gap: 6px;
 }
 
-/* Hamburger toggle — hidden on desktop, shown in the mobile media query. */
-.nav-toggle {
+/* Hamburger toggle — hidden on desktop, shown in the mobile media query.
+   Selector is scoped to .site-nav so it beats the generic .icon-button rule. */
+.site-nav .nav-toggle {
   display: none;
 }
 
@@ -341,9 +342,162 @@ a {
 }
 
 .chat-toolbar {
-  display: none;
+  display: flex;
+  align-items: center;
   gap: 8px;
   margin-bottom: 12px;
+}
+
+.toolbar-mobile-actions {
+  display: none;
+  gap: 8px;
+}
+
+/* Governance toggle ---------------------------------------------------------*/
+.gov-toggle {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  cursor: pointer;
+  user-select: none;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.gov-toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.gov-toggle-track {
+  position: relative;
+  width: 34px;
+  height: 18px;
+  border-radius: 999px;
+  background: #9aa0a6;
+  transition: background 0.15s ease;
+  flex: none;
+}
+
+.gov-toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.15s ease;
+}
+
+.gov-toggle.on .gov-toggle-track {
+  background: #1a7f37;
+}
+
+.gov-toggle.on .gov-toggle-thumb {
+  transform: translateX(16px);
+}
+
+.gov-toggle.on {
+  border-color: #1a7f37;
+  color: #1a7f37;
+}
+
+.gov-toggle.off {
+  border-color: #b42318;
+  color: #b42318;
+}
+
+.gov-toggle input:focus-visible + .gov-toggle-track {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Governance verdict card ---------------------------------------------------*/
+.gov-card {
+  margin: 8px 0 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gov-card .gov-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.gov-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.gov-chip-ok {
+  background: rgba(26, 127, 55, 0.12);
+  color: #1a7f37;
+}
+
+.gov-chip-block {
+  background: rgba(180, 35, 24, 0.12);
+  color: #b42318;
+}
+
+.gov-chip-off {
+  background: rgba(102, 112, 133, 0.14);
+  color: #667085;
+}
+
+.gov-allowed {
+  border-color: rgba(26, 127, 55, 0.35);
+  background: rgba(26, 127, 55, 0.05);
+}
+
+.gov-blocked {
+  border-color: rgba(180, 35, 24, 0.4);
+  background: rgba(180, 35, 24, 0.06);
+}
+
+.gov-disabled {
+  border-style: dashed;
+  flex-direction: row;
+  align-items: center;
+}
+
+.gov-meta {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.gov-text {
+  color: var(--text);
+}
+
+.gov-foot {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--mono, ui-monospace, monospace);
 }
 
 .history-button,
@@ -618,7 +772,7 @@ a {
   gap: 6px;
   padding: 3px 10px;
   border-radius: 999px;
-  font-size: 12px;
+  font-size: 11px;
   background: var(--panel-3);
   border: 1px solid var(--border);
   color: var(--muted);
@@ -1014,6 +1168,428 @@ a {
 }
 
 /* ============================================================================
+   Evaluations page
+   ============================================================================ */
+.eval-page {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.eval-runner-shell h2 {
+  margin-top: 0;
+}
+
+.eval-runner {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin-top: 14px;
+}
+
+/* Toolbar + buttons */
+.eval-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.eval-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.btn-primary,
+.btn-secondary,
+.btn-ghost {
+  font: inherit;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  padding: 9px 16px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+}
+
+.btn-primary {
+  background: var(--brand);
+  color: var(--brand-contrast);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--brand-strong);
+}
+
+.btn-secondary {
+  background: var(--panel-2);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  border-color: var(--brand);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--muted);
+  border-color: var(--border);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.btn-primary:disabled,
+.btn-secondary:disabled,
+.btn-ghost:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.eval-config {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.eval-config code {
+  font-family: var(--mono);
+  font-size: 0.88em;
+  background: var(--panel-3);
+  padding: 1px 6px;
+  border-radius: 5px;
+  color: var(--text);
+}
+
+.eval-pill {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.eval-pill.ok {
+  background: color-mix(in srgb, var(--badge-kb) 22%, transparent);
+  color: var(--badge-kb);
+}
+
+.eval-pill.warn {
+  background: color-mix(in srgb, var(--badge-mcp) 22%, transparent);
+  color: var(--badge-mcp);
+}
+
+/* Evaluator explanation cards */
+.eval-criteria-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.eval-criterion-card {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+}
+
+.eval-criterion-card h3 {
+  margin: 0 0 6px;
+  font-size: 15px;
+}
+
+.eval-criterion-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* Progress */
+.eval-progress {
+  background: var(--panel-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+}
+
+.eval-progress-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.eval-status-line {
+  flex: 1 1 auto;
+  font-size: 14px;
+}
+
+.eval-count {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.eval-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--border-strong);
+  flex: 0 0 auto;
+}
+
+.eval-spinner.on {
+  border-top-color: var(--brand);
+  animation: eval-spin 0.8s linear infinite;
+}
+
+@keyframes eval-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.eval-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--panel);
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.eval-bar-fill {
+  height: 100%;
+  background: var(--brand);
+  transition: width 0.3s ease;
+}
+
+.eval-bar-fill.indeterminate {
+  width: 100% !important;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--brand),
+    transparent
+  );
+  background-size: 40% 100%;
+  background-repeat: no-repeat;
+  animation: eval-slide 1.2s ease-in-out infinite;
+}
+
+@keyframes eval-slide {
+  0% {
+    background-position: -40% 0;
+  }
+  100% {
+    background-position: 140% 0;
+  }
+}
+
+.eval-prompt-list {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.eval-prompt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+}
+
+.eval-prompt-icon {
+  flex: 0 0 auto;
+  width: 18px;
+  text-align: center;
+  font-weight: 700;
+}
+
+.eval-prompt-done .eval-prompt-icon {
+  color: var(--badge-kb);
+}
+
+.eval-prompt-querying .eval-prompt-icon {
+  color: var(--brand);
+}
+
+.eval-prompt-failed .eval-prompt-icon {
+  color: var(--error);
+}
+
+.eval-prompt-text {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.eval-prompt-meta {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+/* Results */
+.eval-results {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 18px 18px 8px;
+}
+
+.eval-results-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.eval-results-head h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.eval-lead {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.eval-scorecard {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 24px;
+  padding: 14px 0 18px;
+}
+
+.eval-score-big {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 130px;
+}
+
+.eval-score-value {
+  font-size: 40px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--brand);
+}
+
+.eval-score-label {
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-top: 4px;
+}
+
+.eval-score-breakdown {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(2, auto);
+  gap: 6px 26px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.eval-score-breakdown strong {
+  color: var(--text);
+  font-size: 16px;
+}
+
+.eval-results-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 14px;
+}
+
+.eval-results-table th,
+.eval-results-table td {
+  border: 1px solid var(--border);
+  padding: 9px 12px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.eval-results-table th {
+  background: var(--panel-3);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+}
+
+.eval-eval-name {
+  font-weight: 600;
+}
+
+.eval-eval-summary {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 2px;
+  max-width: 46ch;
+}
+
+.eval-eval-pct {
+  color: var(--badge-kb);
+  font-weight: 600;
+}
+
+.eval-report-link {
+  margin: 16px 0 8px;
+}
+
+.eval-report-link a {
+  color: var(--link);
+  font-weight: 600;
+}
+
+.eval-error {
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--error) 35%, transparent);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  font-size: 14px;
+  margin: 0;
+}
+
+.eval-footnote {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.eval-footnote a {
+  color: var(--link);
+}
+
+/* ============================================================================
    Responsive — mobile-first portrait, great in desktop landscape
    ============================================================================ */
 @media (max-width: 860px) {
@@ -1026,6 +1602,10 @@ a {
   }
 
   .chat-toolbar {
+    display: flex;
+  }
+
+  .toolbar-mobile-actions {
     display: flex;
   }
 
@@ -1046,9 +1626,15 @@ a {
     font-size: 15px;
   }
 
-  .nav-toggle {
+  .site-nav .nav-toggle {
     display: inline-flex;
     order: 2;
+  }
+
+  /* Hamburger is only shown while the nav is collapsed; once the menu is open
+     the dropdown panel is visible and it's dismissed by clicking away / Escape. */
+  .site-nav.open .nav-toggle {
+    display: none;
   }
 
   .theme-toggle {
@@ -1105,5 +1691,10 @@ a {
   .drawer-overlay,
   .canned-card {
     transition: none;
+  }
+
+  .eval-spinner.on,
+  .eval-bar-fill.indeterminate {
+    animation: none;
   }
 }

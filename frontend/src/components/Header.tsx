@@ -61,8 +61,14 @@ export function Header({ theme, onToggleTheme }: HeaderProps) {
           <NavLink to="/knowledge-base" className={navLinkClass} onClick={closeMenu}>
             Knowledge Base
           </NavLink>
+          <NavLink to="/governance" className={navLinkClass} onClick={closeMenu}>
+            Governance
+          </NavLink>
           <NavLink to="/costs" className={navLinkClass} onClick={closeMenu}>
             Costs
+          </NavLink>
+          <NavLink to="/evaluations" className={navLinkClass} onClick={closeMenu}>
+            Evaluations
           </NavLink>
           <a
             className="nav-link"

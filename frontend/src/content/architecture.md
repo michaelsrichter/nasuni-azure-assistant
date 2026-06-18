@@ -7,6 +7,7 @@
 | `frontend/` (nginx + Vite SPA) | React 19 + TypeScript + Vite | Streaming chat UI: tool pills, citation list, per-turn token usage + cost. **The only thing deployed to Azure Container Apps.** |
 | `frontend/proxy/` (sidecar) | Node 24, `@azure/identity` | Mints a workload-identity bearer token and streams the SSE response through to the Foundry hosted agent's Responses endpoint |
 | `hosted-agent/` | .NET 10 + `Microsoft.Agents.AI.Foundry.Hosting` + `Azure.AI.Projects` | The agent image. Deployed **into Foundry's Hosted Agent Service** (not ACA). Exposes the OpenAI Responses API (SSE). Owns the system prompt and the `knowledge_base_search` function tool |
+| `hosted-agent/Governance/` | `Microsoft.AgentGovernance` (Agent Governance Toolkit) | Wraps the search tool in a governance gate: default-deny capability policy, prompt-injection detection, sensitive-data egress scanning, and a tamper-evident audit log. Toggled per-request via the `x-agt-governance` header |
 | Foundry Hosted Agent Service | Microsoft-managed | Runs the agent container, manages sessions, fronts it with the project Responses endpoint, and lists it under *project → Agents* |
 | `infra/Demo1.Infra` | .NET 10 console | Idempotent provisioning of Search + Knowledge Base + a smoke test |
 | Azure AI Search | Provisioned by `ensure-search` | Hosts the `kb-mslearn` Knowledge Base + Knowledge Source(s) |
@@ -26,12 +27,13 @@ sequenceDiagram
     participant NGX as nginx (frontend container)
     participant PRX as token-proxy (sidecar)
     participant AG as Foundry Hosted Agent Service
+    participant GOV as Governance gate (AGT)
     participant KB as Knowledge Base (kb-mslearn)
     participant NAS as Nasuni file sources
     participant MCP as MS Learn MCP
 
     U->>UI: types question
-    UI->>NGX: POST /api/responses (input, stream true)
+    UI->>NGX: POST /api/responses (input, stream true, x-agt-governance on/off)
     NGX->>PRX: proxy_pass to 127.0.0.1:8090 (no buffering)
     PRX->>PRX: ManagedIdentityCredential.getToken
     PRX->>AG: POST openai/responses with Bearer token
@@ -39,18 +41,25 @@ sequenceDiagram
     AG->>AG: model picks tool knowledge_base_search(query)
     AG-->>PRX: SSE response.output_item.added (function_call)
     AG-->>PRX: SSE function_call_arguments.delta then done
-    AG->>KB: KnowledgeBaseRetrievalClient.Retrieve(query)
-    KB->>NAS: vector + keyword search over Nasuni PDFs
-    NAS-->>KB: ranked passages plus titles
-    KB->>MCP: tools/call microsoft_docs_search
-    MCP-->>KB: passages plus URLs and titles
-    KB-->>AG: KnowledgeBaseRetrievalResponse (merged + reranked)
+    AG->>GOV: Evaluate(query, enforce, session)
+    GOV->>GOV: capability policy + prompt-injection + egress scan + audit
+    alt blocked (and governance ON)
+        GOV-->>AG: verdict blocked (empty results)
+    else allowed (or governance OFF)
+        GOV->>KB: KnowledgeBaseRetrievalClient.Retrieve(query)
+        KB->>NAS: vector + keyword search over Nasuni PDFs
+        NAS-->>KB: ranked passages plus titles
+        KB->>MCP: tools/call microsoft_docs_search
+        MCP-->>KB: passages plus URLs and titles
+        KB-->>GOV: KnowledgeBaseRetrievalResponse (merged + reranked)
+        GOV-->>AG: { results, governance verdict }
+    end
     AG-->>PRX: SSE response.output_item.done (function_call_output)
     AG-->>PRX: SSE response.output_text.delta (multiple)
     AG-->>PRX: SSE response.completed with usage tokens
     PRX-->>NGX: streamed (passthrough)
     NGX-->>UI: streamed (passthrough)
-    UI-->>U: deltas render live, tool pill marked done, usage and cost shown
+    UI-->>U: deltas render live, tool pill marked done, governance badge + usage and cost shown
 ```
 
 ## Design rationale
@@ -111,11 +120,38 @@ The frontend SSE consumer ([frontend/src/api/streamChat.ts](frontend/src/api/str
 | `response.created` | reserved (response id) |
 | `response.output_item.added` (`function_call`) | shows tool pill with name |
 | `response.function_call_arguments.delta` | appends to the tool pill's arg preview |
-| `response.output_item.done` (`function_call_output`) | marks pill ✓, parses tool output as citations |
+| `response.output_item.done` (`function_call_output`) | marks pill ✓, parses tool output `{ results, governance }` into citations + a governance badge |
 | `response.output_text.delta` | appends to the answer text |
 | `response.completed` | renders the usage footer (`input_tokens`, `output_tokens`, model, latency, cost) |
 
 `UsageFooter` calls `estimateCost(model, usage)` against the table in [frontend/src/pricing.ts](frontend/src/pricing.ts). Rates are USD list prices per 1M tokens; the comment in that file pins the verification date and source URL.
+
+### Governance gate (Agent Governance Toolkit)
+
+Every `knowledge_base_search` call runs through a single governance decision point before any retrieval happens. The toggle in the chat toolbar sets a per-request `x-agt-governance: on|off` header (governance is **ON** by default); the agent reads it via `IHttpContextAccessor` and either enforces or bypasses the gate.
+
+```mermaid
+flowchart TD
+    T["knowledge_base_search(query)"] --> EN{"enforce?<br/>(x-agt-governance)"}
+    EN -- "off" --> KB["Azure AI Search KB"]
+    EN -- "on" --> P{"1 · Capability policy<br/>policy.yaml (default-deny)"}
+    P -- deny --> B["⛔ Blocked + audit entry"]
+    P -- allow --> I{"2 · Prompt-injection<br/>detector (threat ≥ High)"}
+    I -- detected --> B
+    I -- safe --> S{"3 · Sensitive-data<br/>egress scanner"}
+    S -- "secret / PII / internal host" --> B
+    S -- clean --> KB
+    KB --> V["{ results, governance verdict }"]
+    B --> V
+```
+
+The three controls are **deterministic** (they do not depend on the model behaving) and layered in [hosted-agent/Governance/GovernanceGate.cs](hosted-agent/Governance/GovernanceGate.cs):
+
+1. **Capability policy** — [hosted-agent/policy.yaml](hosted-agent/policy.yaml) is `default_action: deny` with a single allow rule for `knowledge_base_search`, so the agent is sandboxed to its one sanctioned tool. The AGT policy engine reliably binds `tool_name`; content-level checks are done in code because the condition language does not bind tool arguments.
+2. **Prompt-injection detection** — the toolkit's built-in detector blocks queries at `High` threat or above (instruction overrides, system-prompt extraction, jailbreaks).
+3. **Sensitive-data egress scan** — because the KB fans out to an *external* MCP server, [hosted-agent/Governance/SensitiveDataScanner.cs](hosted-agent/Governance/SensitiveDataScanner.cs) blocks queries carrying secrets, PII, or internal/egress targets before anything leaves the boundary.
+
+Every decision (allow or block) is appended to a **hash-chained, tamper-evident audit log** and recorded as OpenTelemetry metrics under the `AgentGovernance` meter. The governed tool ([hosted-agent/Governance/GovernedKnowledgeBaseSearch.cs](hosted-agent/Governance/GovernedKnowledgeBaseSearch.cs)) returns `{ results, governance }` so the SPA can render the verdict as a badge (allowed) or banner (blocked). See the **AI Governance** page for the full value proposition.
 
 ### Telemetry
 

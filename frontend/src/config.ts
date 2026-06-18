@@ -65,4 +65,6 @@ export const links = {
   hostedAgents:
     'https://learn.microsoft.com/azure/foundry/agents/quickstarts/quickstart-hosted-agent',
   knowledgeBases: 'https://learn.microsoft.com/azure/search/',
+  agentGovernance: 'https://github.com/microsoft/agent-governance-toolkit',
+  foundryEvaluations: 'https://learn.microsoft.com/azure/ai-foundry/concepts/evaluation-approach-gen-ai',
 };
