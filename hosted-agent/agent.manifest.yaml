@@ -26,6 +26,8 @@ template:
     cpu: "0.5"
     memory: 1.0Gi
   environment_variables:
+    - name: AZURE_USE_MANAGED_IDENTITY
+      value: "true"
     - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
       value: "{{AZURE_AI_MODEL_DEPLOYMENT_NAME}}"
     - name: DEMO1_SEARCH_ENDPOINT

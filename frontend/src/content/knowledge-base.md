@@ -82,7 +82,7 @@ sequenceDiagram
     participant KB as Azure AI Search KB
     B->>N: POST /api/responses (no secrets)
     N->>P: forward request
-    P->>P: acquire Entra token via<br/>Managed Identity (DefaultAzureCredential)
+    P->>P: acquire Entra token via<br/>Managed Identity (ManagedIdentityCredential)
     P->>F: POST Responses API + Bearer token
     F->>F: agent runs, calls knowledge_base_search
     F->>KB: RetrieveAsync (agent's managed identity)
@@ -98,8 +98,9 @@ sequenceDiagram
    when calling the Foundry agent's Responses endpoint. No client secret is ever
    stored.
 3. **Agent → knowledge base:** Inside Foundry, the agent authenticates to Azure AI
-   Search with `DefaultAzureCredential` (a managed identity) — see
-   [`Program.cs` line 21](https://github.com/michaelsrichter/nasuni-azure-assistant/blob/main/hosted-agent/Program.cs#L21).
+   Search with its **managed identity** (`ManagedIdentityCredential` in Azure,
+   `DefaultAzureCredential` locally) — see
+   [`CredentialFactory.cs`](https://github.com/michaelsrichter/nasuni-azure-assistant/blob/main/hosted-agent/CredentialFactory.cs).
    No search admin key is embedded in the agent.
 4. **RBAC, not keys:** Access is granted by **role assignments**, not shared
    secrets. The deploy script grants the frontend identity the Foundry
@@ -130,19 +131,22 @@ lines on the public repository's `main` branch.
 
 ### 1. Read the KB endpoint + name (no secrets)
 
-[`hosted-agent/Program.cs` L16–L19](https://github.com/michaelsrichter/nasuni-azure-assistant/blob/main/hosted-agent/Program.cs#L16-L19)
+[`hosted-agent/Program.cs` L15–L18](https://github.com/michaelsrichter/nasuni-azure-assistant/blob/main/hosted-agent/Program.cs#L15-L18)
 — the search endpoint and knowledge-base name come from environment variables
 (`DEMO1_SEARCH_ENDPOINT`, `DEMO1_KNOWLEDGE_BASE_NAME`), injected at deploy time.
 
 ### 2. Authenticate with a managed identity
 
-[`hosted-agent/Program.cs` L21–L22](https://github.com/michaelsrichter/nasuni-azure-assistant/blob/main/hosted-agent/Program.cs#L21-L22)
-— `new DefaultAzureCredential()` is the only credential, and it's passed straight
-into the knowledge-base tool. No keys.
+[`hosted-agent/CredentialFactory.cs`](https://github.com/michaelsrichter/nasuni-azure-assistant/blob/main/hosted-agent/CredentialFactory.cs)
+— in Azure the agent authenticates with `ManagedIdentityCredential` **directly**
+(selected via the `AZURE_USE_MANAGED_IDENTITY` flag), which skips
+`DefaultAzureCredential`'s credential-chain probing on cold start. Locally it falls
+back to `DefaultAzureCredential` so `az login` keeps working. Either way it's a
+managed identity in production — no keys.
 
 ### 3. Register the KB as the agent's one retrieval tool
 
-[`hosted-agent/Program.cs` L24–L33](https://github.com/michaelsrichter/nasuni-azure-assistant/blob/main/hosted-agent/Program.cs#L24-L33)
+[`hosted-agent/Program.cs` L22–L32](https://github.com/michaelsrichter/nasuni-azure-assistant/blob/main/hosted-agent/Program.cs#L22-L32)
 — the agent is created with a single tool, `knowledge_base_search`, exposed to the
 model via `AIFunctionFactory.Create`.
 

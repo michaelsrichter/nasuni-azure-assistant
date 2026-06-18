@@ -33,7 +33,7 @@ sequenceDiagram
     U->>UI: types question
     UI->>NGX: POST /api/responses (input, stream true)
     NGX->>PRX: proxy_pass to 127.0.0.1:8090 (no buffering)
-    PRX->>PRX: DefaultAzureCredential.getToken
+    PRX->>PRX: ManagedIdentityCredential.getToken
     PRX->>AG: POST openai/responses with Bearer token
     AG-->>PRX: SSE response.created
     AG->>AG: model picks tool knowledge_base_search(query)
@@ -73,7 +73,7 @@ The Container App has no agent responsibilities at all — it serves the SPA and
 Browsers cannot mint Microsoft Entra tokens, and the Foundry hosted-agent endpoint *requires* an Entra bearer token — so a token-attaching hop is mandatory, not optional. The ~130-LOC Node sidecar in [frontend/proxy/server.mjs](../frontend/proxy/server.mjs):
 
 1. Runs as a second container in the same ACA app as nginx (so they share `127.0.0.1` and a single managed identity).
-2. Acquires a token via `DefaultAzureCredential` for `FOUNDRY_TOKEN_SCOPE` (default `https://ai.azure.com/.default`, cached until 5 minutes before expiry).
+2. Acquires a token via `ManagedIdentityCredential` (in Azure; `DefaultAzureCredential` locally, gated by `AZURE_USE_MANAGED_IDENTITY`) for `FOUNDRY_TOKEN_SCOPE` (default `https://ai.azure.com/.default`, cached until 5 minutes before expiry).
 3. Forwards each request to `FOUNDRY_AGENT_RESPONSES_URL` — the Foundry project's per-agent Responses endpoint — with the `Authorization: Bearer …` header attached.
 4. Pipes the response body straight back, preserving `text/event-stream` semantics (sets `x-accel-buffering: no` and `cache-control: no-cache, no-transform`).
 

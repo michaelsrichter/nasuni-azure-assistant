@@ -57,7 +57,7 @@ DEMO1_SEARCH_ENDPOINT=https://srch-demo1-d9129d.search.windows.net
 DEMO1_KNOWLEDGE_BASE_NAME=kb-mslearn
 ```
 
-Local auth is `DefaultAzureCredential` — `az login` is sufficient if your principal has the same RBAC the deployed SAMI gets (see *Deploying* below).
+Local auth is `DefaultAzureCredential` — `az login` is sufficient if your principal has the same RBAC the deployed SAMI gets (see *Deploying* below). In Azure the agent and sidecar use `ManagedIdentityCredential` directly (gated by `AZURE_USE_MANAGED_IDENTITY=true`) to avoid the credential-chain probing on cold start.
 
 ## Deploying
 
@@ -172,7 +172,7 @@ dependencies
 | `KB returned 0 references` in `ensure-agent` smoke test | KB's AzureOpenAI vectorizer pointed at `cognitiveservices.azure.com` instead of `openai.azure.com` | Re-run `ensure-kb` — the command uses the correct host. The cognitive-services host returns 401 because the Foundry account has `disableLocalAuth=true` and the bearer audience does not match. |
 | Agent returns 500 with `HostedSessionIsolationKeyProvider returned null` (local dev) | A locally-run agent container needs the isolation headers; you called it with raw `curl` (or without `INJECT_ISOLATION_KEYS=true`). The Foundry Hosted Agent Service injects them in production. | Add `x-agent-user-isolation-key: localdev-user` and `x-agent-chat-isolation-key: localdev-chat-N` on the request, or run the sidecar with `INJECT_ISOLATION_KEYS=true`. |
 | First few deltas arrive but UI freezes | A proxy or CDN is buffering SSE | Verify nginx has `proxy_buffering off; chunked_transfer_encoding on; proxy_read_timeout 600s;` for `location = /api/responses`. The sidecar already sets `x-accel-buffering: no` and `cache-control: no-cache, no-transform`. |
-| Sidecar logs `Failed to acquire token from DefaultAzureCredential` | The frontend SAMI can't get a token for `https://ai.azure.com/.default` | Confirm the frontend app has a system-assigned identity and that **Azure AI User** is assigned at the project scope. Locally, run `az login` (and set `FOUNDRY_TOKEN_SCOPE=` empty when targeting a local agent). |
+| Sidecar logs `Failed to acquire token for the Foundry agent endpoint` | The frontend SAMI can't get a token for `https://ai.azure.com/.default` | Confirm the frontend app has a system-assigned identity and that **Azure AI User** is assigned at the project scope. Locally, run `az login` (and set `FOUNDRY_TOKEN_SCOPE=` empty when targeting a local agent). |
 | `/api/responses` returns 403 immediately after deploy | RBAC not yet propagated to the frontend SAMI | Wait 5–10 min and retry. Verify with `az role assignment list --assignee <principal> --scope <project-id>` |
 | Agent provisioning fails with `image_pull_failed` | The project managed identity can't pull from ACR | Confirm `Container Registry Repository Reader` on the ACR for the project MI and that the registry's `azureADAuthenticationAsArmPolicy` is `enabled` (azd normally handles this) |
 | Agent answers but every tool call returns 0 citations / 403 | The platform-created **agent identity** lacks Search access | Grant `Search Index Data Reader` + `Search Service Contributor` to the agent identity on the Search service (see *Deploy the agent*, step 5) |

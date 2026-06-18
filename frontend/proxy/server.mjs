@@ -18,7 +18,7 @@
 
 import http from 'node:http';
 import https from 'node:https';
-import { DefaultAzureCredential } from '@azure/identity';
+import { DefaultAzureCredential, ManagedIdentityCredential } from '@azure/identity';
 
 const PORT = Number(process.env.PROXY_PORT ?? 8090);
 const HOST = process.env.PROXY_HOST ?? '127.0.0.1';
@@ -46,7 +46,19 @@ const TOKEN_SCOPE =
 // in-memory session provider). Opt in with INJECT_ISOLATION_KEYS=true.
 const INJECT_ISOLATION_KEYS = /^(1|true|yes)$/i.test(process.env.INJECT_ISOLATION_KEYS ?? '');
 
-const credential = TOKEN_SCOPE ? new DefaultAzureCredential() : null;
+// In Azure we use ManagedIdentityCredential directly instead of
+// DefaultAzureCredential to avoid walking the credential chain (and the
+// occasional IMDS probe delay) on cold start. Locally (no AZURE_USE_MANAGED_IDENTITY)
+// we fall back to DefaultAzureCredential so `az login` keeps working.
+function createCredential() {
+  if (!TOKEN_SCOPE) return null;
+  const useManagedIdentity = /^(1|true|yes)$/i.test(process.env.AZURE_USE_MANAGED_IDENTITY ?? '');
+  if (!useManagedIdentity) return new DefaultAzureCredential();
+  const clientId = process.env.AZURE_CLIENT_ID;
+  return clientId ? new ManagedIdentityCredential({ clientId }) : new ManagedIdentityCredential();
+}
+
+const credential = createCredential();
 let cached = null; // { token: string, expiresOn: number }
 
 async function getToken() {
@@ -54,7 +66,7 @@ async function getToken() {
   const now = Date.now();
   if (cached && cached.expiresOn - now > 5 * 60 * 1000) return cached.token;
   const result = await credential.getToken(TOKEN_SCOPE);
-  if (!result) throw new Error('Failed to acquire token from DefaultAzureCredential');
+  if (!result) throw new Error('Failed to acquire token for the Foundry agent endpoint');
   cached = { token: result.token, expiresOn: result.expiresOnTimestamp };
   return result.token;
 }

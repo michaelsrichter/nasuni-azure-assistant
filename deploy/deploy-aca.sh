@@ -303,6 +303,8 @@ properties:
             value: "$FOUNDRY_AGENT_RESPONSES_URL"
           - name: FOUNDRY_TOKEN_SCOPE
             value: "$FOUNDRY_TOKEN_SCOPE"
+          - name: AZURE_USE_MANAGED_IDENTITY
+            value: "true"
           - name: PROXY_PORT
             value: "8090"
           - name: PROXY_HOST
