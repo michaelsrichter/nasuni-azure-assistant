@@ -42,7 +42,7 @@ export type StreamEvent =
   | { kind: 'toolCallCompleted'; callId: string; name: string; citations: Citation[]; governance: Governance | null }
   | { kind: 'textDelta'; delta: string }
   | { kind: 'completed'; model: string; usage: TokenUsage | null }
-  | { kind: 'error'; message: string };
+  | { kind: 'error'; message: string; code?: string };
 
 export interface StreamRequest {
   input: string;
@@ -53,7 +53,61 @@ export interface StreamRequest {
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? '';
 
+const MAX_ATTEMPTS = 3;
+const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+// Some backend failures are transient and resolve on retry. The Foundry hosted
+// agent occasionally returns a "storage_error" ("...Please retry the request.")
+// on a cold/loaded session, failing fast before any output is produced. Treat
+// those — plus generic server/rate-limit blips — as safe to retry.
+function isTransient(ev: { code?: string; message?: string }): boolean {
+  const code = ev.code?.toLowerCase() ?? '';
+  const msg = ev.message?.toLowerCase() ?? '';
+  return (
+    code === 'storage_error' ||
+    code === 'server_error' ||
+    code === 'rate_limit_exceeded' ||
+    msg.includes('please retry') ||
+    msg.includes('internal error') ||
+    msg.includes('temporarily')
+  );
+}
+
+/**
+ * Streams a chat turn, transparently retrying transient backend failures that
+ * occur before any user-visible output. Once output has started (a tool call,
+ * text, or completion), errors are surfaced as-is rather than retried.
+ */
 export async function* streamChat(req: StreamRequest): AsyncGenerator<StreamEvent> {
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    let producedOutput = false;
+    let retry = false;
+    try {
+      for await (const ev of streamOnce(req)) {
+        if (ev.kind === 'error') {
+          if (!producedOutput && attempt < MAX_ATTEMPTS && isTransient(ev)) {
+            retry = true;
+            break;
+          }
+          yield ev;
+          return;
+        }
+        if (ev.kind !== 'created') producedOutput = true;
+        yield ev;
+      }
+    } catch (err) {
+      if (req.signal?.aborted || producedOutput || attempt >= MAX_ATTEMPTS) throw err;
+      retry = true;
+    }
+    if (retry) {
+      await delay(300 * attempt);
+      continue;
+    }
+    return;
+  }
+}
+
+async function* streamOnce(req: StreamRequest): AsyncGenerator<StreamEvent> {
   const body: Record<string, unknown> = { input: req.input, stream: true };
   if (req.conversationId) body.conversation = req.conversationId;
 
@@ -144,8 +198,14 @@ function translate(event: string, payload: unknown, toolCallNames: Map<string, s
 
     case 'response.failed':
     case 'response.error': {
-      const err = (p.error as { message?: string } | undefined) ?? (p as { message?: string });
-      return { kind: 'error', message: err?.message ?? 'Stream failed' };
+      // The failure detail is nested at response.error for response.failed events;
+      // fall back to a top-level error/message for other shapes.
+      const response = p.response as { error?: { code?: string; message?: string } } | undefined;
+      const err =
+        response?.error ??
+        (p.error as { code?: string; message?: string } | undefined) ??
+        (p as { code?: string; message?: string });
+      return { kind: 'error', message: err?.message ?? 'Stream failed', code: err?.code };
     }
 
     default:

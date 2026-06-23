@@ -155,7 +155,14 @@ export function ChatPanel({ initialTurns = [], readOnly = false, governanceOn = 
                 {turn.error && <span className="error">{turn.error}</span>}
                 {turn.text.length > 0 && <pre className="answer">{turn.text}</pre>}
                 {!turn.done && turn.text.length === 0 && turn.toolCalls.length === 0 && (
-                  <span className="dots">Thinking&hellip;</span>
+                  <div className="thinking" role="status" aria-label="Waiting for a response">
+                    <span className="thinking-dots" aria-hidden="true">
+                      <i></i>
+                      <i></i>
+                      <i></i>
+                    </span>
+                    <span className="thinking-label">Thinking</span>
+                  </div>
                 )}
                 {turn.citations.length > 0 && <CitationsList citations={turn.citations} />}
                 {turn.usage && (
