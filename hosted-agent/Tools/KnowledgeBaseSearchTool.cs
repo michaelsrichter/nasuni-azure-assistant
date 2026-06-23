@@ -20,6 +20,13 @@ internal sealed record KbResult(int index, string title, string url, string sour
 /// </summary>
 internal sealed class KnowledgeBaseSearchTool
 {
+    // Cap how much grounding context is handed back to the model. The knowledge
+    // base can return many passages; feeding all of them (each up to a few KB)
+    // into the model inflates prefill latency and token cost with diminishing
+    // grounding value. Keep the top passages and trim each snippet.
+    private const int MaxResults = 8;
+    private const int MaxSnippetChars = 800;
+
     private readonly KnowledgeBaseRetrievalClient _kb;
 
     public KnowledgeBaseSearchTool(Uri searchEndpoint, string knowledgeBaseName, TokenCredential credential)
@@ -40,13 +47,13 @@ internal sealed class KnowledgeBaseSearchTool
         var resp = await _kb.RetrieveAsync(req, cancellationToken: ct);
         var citations = KbCitationParser.Extract(resp.Value);
 
-        return citations.Select((c, i) => new KbResult(
+        return citations.Take(MaxResults).Select((c, i) => new KbResult(
             index: i + 1,
             title: c.Title,
             url: c.Url,
             source: c.Source,
             snippet: string.IsNullOrEmpty(c.Snippet)
                 ? null
-                : (c.Snippet!.Length > 1500 ? c.Snippet[..1500] + "…" : c.Snippet))).ToList();
+                : (c.Snippet!.Length > MaxSnippetChars ? c.Snippet[..MaxSnippetChars] + "…" : c.Snippet))).ToList();
     }
 }
